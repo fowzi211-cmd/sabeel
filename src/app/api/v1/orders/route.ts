@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 import { parseJson, route } from "@/lib/http";
 import { buyerOrderView, listBuyerOrders, placeOrder, placeSchema } from "@/server/orders";
 
-export const GET = route({}, async ({ current }) => ({
-  orders: (await listBuyerOrders(current.user.id)).map((o) => buyerOrderView(o)),
-}));
+export const GET = route({}, async ({ req, current }) => {
+  const cursor = req.nextUrl.searchParams.get("cursor") ?? undefined;
+  const { items, nextCursor } = await listBuyerOrders(current.user.id, { cursor });
+  return { orders: items.map((o) => buyerOrderView(o)), nextCursor };
+});
 
 /** Idempotent: send the same `Idempotency-Key` on a retry and you get the original order back. */
 export const POST = route({}, async ({ req, current, meta }) => {

@@ -13,6 +13,7 @@ import { formatSar } from "@/lib/money";
 import { amountOwedFor, dueAtFrom, isOnTime, isValidAdjustment } from "@/lib/payments";
 import { checkCeilingAndPause, createFeeAccrual } from "./fees";
 import { checkRateLimit } from "@/lib/rateLimit";
+import { DEFAULT_PAGE_SIZE, paginate } from "@/lib/pagination";
 import { notifyCancelled } from "./orders";
 import { notifySupplier, notifyUserId, type Bilingual } from "./notify";
 import { deleteUpload, saveReceipt } from "./storage";
@@ -365,8 +366,9 @@ export async function markNotReceived(user: Actor, supplier: Supplier, orderId: 
 export interface PaymentListFilter { status?: PaymentStatus; brandId?: string; from?: Date; to?: Date; q?: string }
 
 /** The supplier's Payments page (design pack §"Supplier Payments page"). */
-export async function listSupplierPayments(supplierId: string, filter: PaymentListFilter = {}) {
-  return db.paymentRecord.findMany({
+export async function listSupplierPayments(supplierId: string, filter: PaymentListFilter = {}, opts: { cursor?: string; limit?: number } = {}) {
+  const limit = opts.limit ?? DEFAULT_PAGE_SIZE;
+  const rows = await db.paymentRecord.findMany({
     where: {
       order: {
         supplierId,
@@ -378,8 +380,10 @@ export async function listSupplierPayments(supplierId: string, filter: PaymentLi
     },
     include: { order: { select: { id: true, orderNo: true, totalHalalas: true, feePerPacketHalalas: true, packetEqMilliTotal: true, placedAt: true, items: { select: { brandNameAr: true, brandNameEn: true } } } } },
     orderBy: { createdAt: "desc" },
-    take: 300,
+    take: limit + 1,
+    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
   });
+  return paginate(rows, limit);
 }
 
 // ───────────────────────── background jobs ─────────────────────────

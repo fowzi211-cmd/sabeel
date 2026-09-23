@@ -40,6 +40,7 @@ export const ar = {
     admin: "لوحة الإدارة",
     supplierPortal: "بوابة المورّد",
     sar: "ر.س",
+    older: "الأقدم",
   },
   roles: {
     BUYER: "مشترٍ / متبرّع",
@@ -951,7 +952,7 @@ export const ar = {
       fee: "رسوم سبيل",
       keep: "ما تحتفظ به",
     },
-    totalsLine: "{n} معاملة · احتفظت بـ {amount}",
+    totalsLine: "{n} معاملة في هذه الصفحة · احتفظت بـ {amount}",
     empty: "لا توجد معاملات بعد.",
   },
   feeInvoice: {

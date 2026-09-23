@@ -7,6 +7,8 @@ import { requirePage } from "@/lib/guards";
 import { formatSar } from "@/lib/money";
 import { buyerOrderView, listBuyerOrders } from "@/server/orders";
 
+const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)?.trim() || undefined;
+
 export const generateMetadata = pageMeta("orders.title");
 
 const tone = (s: string) =>
@@ -15,10 +17,13 @@ const tone = (s: string) =>
   : s === "AWAITING_SUPPLIER" || s === "ESCALATED" || s === "FAILED_ATTEMPT" || s === "ADMIN_REVIEW" ? "warn"
   : "info";
 
-export default async function OrdersPage() {
+export default async function OrdersPage({ searchParams }: PageProps<"/orders">) {
   const { user } = await requirePage({ path: "/orders" });
   const { t, locale } = await getI18n();
-  const orders = (await listBuyerOrders(user.id)).map((o) => buyerOrderView(o));
+  const sp = await searchParams;
+  const cursor = one(sp.cursor);
+  const { items, nextCursor } = await listBuyerOrders(user.id, { cursor });
+  const orders = items.map((o) => buyerOrderView(o));
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
@@ -45,6 +50,7 @@ export default async function OrdersPage() {
           </li>
         ))}
       </ul>
+      {nextCursor ? <Link href={`/orders?cursor=${nextCursor}`} className={btnCls("secondary")}>{t("common.older")}</Link> : null}
     </div>
   );
 }

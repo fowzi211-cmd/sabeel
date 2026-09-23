@@ -3,9 +3,10 @@ import { Prisma, type Role, type Supplier, type User } from "@prisma/client";
 import { db } from "@/lib/db";
 import { audit, type RequestMeta } from "@/lib/audit";
 import { AppError } from "@/lib/errors";
-import { averageStars, canStillReview, isRatedSupplier } from "@/lib/reviews";
+import { canStillReview, isRatedSupplier, weightedAverageStars } from "@/lib/reviews";
 import { REVIEW_CATEGORIES, REVIEW_REMINDER_HOURS } from "@/lib/fulfilment";
 import { checkRateLimit } from "@/lib/rateLimit";
+import { DEFAULT_PAGE_SIZE, paginate } from "@/lib/pagination";
 import { deleteUpload, saveReviewPhoto } from "./storage";
 import { notifySupplier, notifyUserId } from "./notify";
 
@@ -88,36 +89,50 @@ export async function removeReview(admin: Actor, reviewId: string, input: z.infe
 
 export interface ReviewListFilter { q?: string }
 
-export const listSupplierReviews = (supplierId: string) =>
-  db.review.findMany({
+export async function listSupplierReviews(supplierId: string, opts: { cursor?: string; limit?: number } = {}) {
+  const limit = opts.limit ?? DEFAULT_PAGE_SIZE;
+  const rows = await db.review.findMany({
     where: { supplierId, removedAt: null },
     include: { reply: true, order: { select: { orderNo: true } }, buyer: { select: { name: true } } },
     orderBy: { createdAt: "desc" },
-    take: 300,
+    take: limit + 1,
+    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
   });
+  return paginate(rows, limit);
+}
 
-export const listAdminReviews = (filter: ReviewListFilter = {}) =>
-  db.review.findMany({
+export async function listAdminReviews(filter: ReviewListFilter = {}, opts: { cursor?: string; limit?: number } = {}) {
+  const limit = opts.limit ?? DEFAULT_PAGE_SIZE;
+  const rows = await db.review.findMany({
     where: filter.q ? { OR: [{ order: { orderNo: { contains: filter.q, mode: "insensitive" } } }, { supplier: { tradeName: { contains: filter.q, mode: "insensitive" } } }] } : {},
     include: { reply: true, order: { select: { orderNo: true } }, supplier: { select: { tradeName: true, legalNameAr: true } }, buyer: { select: { name: true } } },
     orderBy: { createdAt: "desc" },
-    take: 300,
+    take: limit + 1,
+    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
   });
+  return paginate(rows, limit);
+}
 
 /** Feeds the offer comparison list (search.ts): "New" until REVIEWS_UNTIL_RATED reviews are in. */
-export async function supplierRatingSummary(supplierId: string): Promise<{ rating: number | null; reviewCount: number }> {
-  const rows = await db.review.findMany({ where: { supplierId, removedAt: null }, select: { stars: true } });
+export async function supplierRatingSummary(supplierId: string, now: Date = new Date()): Promise<{ rating: number | null; reviewCount: number }> {
+  const rows = await db.review.findMany({ where: { supplierId, removedAt: null }, select: { stars: true, createdAt: true } });
   if (!isRatedSupplier(rows.length)) return { rating: null, reviewCount: rows.length };
-  return { rating: averageStars(rows.map((r) => r.stars)), reviewCount: rows.length };
+  return { rating: weightedAverageStars(rows, now), reviewCount: rows.length };
 }
 
 /** Batched version of supplierRatingSummary for the offer list, one query for every supplier shown. */
-export async function supplierRatingSummaries(supplierIds: string[]): Promise<Map<string, { rating: number | null; reviewCount: number }>> {
-  const rows = await db.review.groupBy({ by: ["supplierId"], where: { supplierId: { in: supplierIds }, removedAt: null }, _avg: { stars: true }, _count: { stars: true } });
-  const map = new Map<string, { rating: number | null; reviewCount: number }>();
+export async function supplierRatingSummaries(supplierIds: string[], now: Date = new Date()): Promise<Map<string, { rating: number | null; reviewCount: number }>> {
+  if (supplierIds.length === 0) return new Map();
+  const rows = await db.review.findMany({ where: { supplierId: { in: supplierIds }, removedAt: null }, select: { supplierId: true, stars: true, createdAt: true } });
+  const bySupplier = new Map<string, { stars: number; createdAt: Date }[]>();
   for (const r of rows) {
-    const count = r._count.stars;
-    map.set(r.supplierId, isRatedSupplier(count) ? { rating: Math.round((r._avg.stars ?? 0) * 10) / 10, reviewCount: count } : { rating: null, reviewCount: count });
+    const list = bySupplier.get(r.supplierId) ?? [];
+    list.push({ stars: r.stars, createdAt: r.createdAt });
+    bySupplier.set(r.supplierId, list);
+  }
+  const map = new Map<string, { rating: number | null; reviewCount: number }>();
+  for (const [supplierId, list] of bySupplier) {
+    map.set(supplierId, isRatedSupplier(list.length) ? { rating: weightedAverageStars(list, now), reviewCount: list.length } : { rating: null, reviewCount: list.length });
   }
   return map;
 }

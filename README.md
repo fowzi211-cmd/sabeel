@@ -74,6 +74,7 @@ when `NODE_ENV != production`; in production the console provider is refused (se
 | `npm run verify:4` | **89 end-to-end checks** for slice 4: confirmation (buyer and admin-after-silence), delivery and non-payment disputes and every resolution outcome, payment mark-paid/received/not-received, overdue blocking new orders, reminder jobs, the 30-day close job, immutability, privacy (needs `npm run db:seed` first) |
 | `npm run verify:5` | **86 end-to-end checks** for slice 5: fee accrual on confirmation, ceiling warnings/auto-pause, invoice generation/reminders/overdue, the pause-then-suspend escalation ladder, supplier pay/admin confirm-or-reject, the on-time-invoices → higher ceiling upgrade, fee-rule publish with notice, review submit/window/one-per-order, supplier reply, admin removal, rating aggregation, immutability, privacy (needs `npm run db:seed` first) |
 | `npm run verify:6` | **22 end-to-end checks** for slice 6: the health endpoint, the generic rate limiter tripping on the write endpoints it protects, document-expiry notices, agreement re-acceptance nudges, the 30-day driver-location purge (and that it never touches proof evidence), the unified admin dashboard, access control (needs `npm run db:seed` first) |
+| `npm run verify:7` | **23 end-to-end checks** for slice 7 hardening: cursor pagination on orders/payments/fee-invoices/reviews (including a supplier's multi-status tab query and exact `groupBy` counts), recency-weighted ratings reaching the real search API, and ceiling-warning dedup by genuine threshold-crossing — including the recovery-then-re-rise case a calendar-day dedup would miss (needs `npm run db:seed` first) |
 | `npm run jobs:run` | One manual pass of the background jobs (the server also runs them every minute) |
 | `npm run db:migrate` · `db:generate` · `db:seed` · `db:seed:demo` | Database tasks |
 | `npm run db:backup` · `db:restore -- <file>` | `scripts/backup.ts` / `scripts/restore.ts` — see `DEPLOY.md` §8 |
@@ -287,7 +288,11 @@ src/i18n/               Arabic + English dictionaries (English must provide ever
    driver proceeds with a recorded reason and the delivery is flagged for review.
 9. **Re-routing never raises the price and never asks the buyer** to choose; if nobody qualifies the order is
     escalated. A "choose another supplier" screen for the buyer is not built.
-10. **Order/invoice/review lists** are capped (100–300 rows depending on the list) with no pagination yet.
+10. ~~**Order/invoice/review lists** are capped (100–300 rows depending on the list) with no pagination yet.~~
+   **Closed in slice 7**: orders, payments, fee invoices and reviews (buyer/supplier/admin views) are
+   all cursor-paginated now (`src/lib/pagination.ts`), 50 rows a page with a "Load more" link; a
+   supplier's per-status tab counts come from a separate `groupBy` query so they stay exact regardless
+   of page size.
 11. **Delivery-dispute evidence is the buyer's word plus the driver's original proof** — there is no separate
    "supplier responds with counter-evidence" step (design pack's 48 h response window). An admin decides from
    what is already on file; this is a deliberate scope cut for the MVP, not an oversight.
@@ -300,11 +305,16 @@ src/i18n/               Arabic + English dictionaries (English must provide ever
    `SUBMITTED → REMOVED`; an admin can remove a review immediately, there is no 48 h window before that becomes
    possible. There is also no public supplier-profile page listing a supplier's reviews — only the aggregate
    rating in offer comparison and the supplier/admin moderation views.
-14. **Ranking still uses a simple average rating**, not the "recent reviews weigh more" decay a mature
-   marketplace would want, and on-time delivery % (R08) is still a later-slice input, defaulted to a neutral
-   prior until it is built.
-15. **Ceiling-warning notifications are deduped by calendar day**, not by genuine threshold-crossing — a
-   supplier that stays at, say, 75 % exposure for a week gets one warning a day, not one warning total. The
+14. ~~**Ranking still uses a simple average rating**, not the "recent reviews weigh more" decay a mature
+   marketplace would want~~ **Closed in slice 7**: `weightedAverageStars()` (`src/lib/reviews.ts`) applies an
+   exponential decay with a 90-day half-life, used everywhere a supplier's rating is shown or ranked on
+   (offer search, supplier/admin dashboards). On-time delivery % (R08) is still a later-slice input,
+   defaulted to a neutral prior until it is built.
+15. ~~**Ceiling-warning notifications are deduped by calendar day**, not by genuine threshold-crossing~~
+   **Closed in slice 7**: dedup now tracks the supplier's last-known ceiling band from its own notification
+   history (`src/server/fees.ts`) — a supplier sitting at 75% for a week gets exactly one warning, not one a
+   day, but a fresh rise past a threshold after a genuine recovery (exposure actually dropping, whether from
+   a reinstate or simply paying an invoice down while never paused) warns again. The
    fee-change notice period (30 days) is a fixed constant, not admin-configurable per change the way a terms
    document's notice period is.
 16. **Hosting**: `DEPLOY.md` now has the runbook (systemd unit, Caddy/TLS config, backup/restore
@@ -328,6 +338,12 @@ src/i18n/               Arabic + English dictionaries (English must provide ever
 
 ## Roadmap
 
-All 6 slices in the original plan are built and verified. What remains is exactly what's listed
-above under "known gaps" — mostly owner/legal/ops actions (a real SMS provider, legal review, real
-hosting, a pentest) rather than more application code.
+All 6 slices in the original plan are built and verified, plus an ad-hoc **slice 7 hardening** pass
+(pagination, recency-weighted ratings, ceiling-warning dedup by threshold-crossing — see gaps #10,
+#14, #15 above, `npm run verify:7`). Deliberately left out of slice 7, and still open: PDF
+certificate generation (#4), a review-flagging/moderation queue and public supplier-profile page
+(#13, #20), a recipient-PII purge job (#17 — blocked on a lawyer-defined retention period, not
+something to invent), and moving the rate limiter to a shared store (#18 — a disclosed, reasonable
+tradeoff at the pilot's one-instance scale). What remains beyond that is exactly what's listed above
+under "known gaps" — mostly owner/legal/ops actions (a real SMS provider, legal review, real hosting,
+a pentest) rather than more application code.

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { OrderStatus } from "@prisma/client";
-import { Card, Chip, PageHeading } from "@/components/ui";
+import { Card, Chip, PageHeading, btnCls } from "@/components/ui";
 import { SupplierSubnav } from "@/components/SupplierSubnav";
 import { getI18n } from "@/i18n";
 import { pageMeta } from "@/i18n/meta";
@@ -9,8 +9,10 @@ import { db } from "@/lib/db";
 import { fmtWhen } from "@/lib/format";
 import { requirePage } from "@/lib/guards";
 import { formatSar } from "@/lib/money";
-import { listSupplierOrders, supplierOrderView } from "@/server/orders";
+import { listSupplierOrders, supplierOrderStatusCounts, supplierOrderView } from "@/server/orders";
 import { getOwnedSupplier } from "@/server/suppliers";
+
+const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)?.trim() || undefined;
 
 export const generateMetadata = pageMeta("sorders.title");
 
@@ -28,13 +30,18 @@ export default async function SupplierOrders({ searchParams }: PageProps<"/suppl
   const supplier = await getOwnedSupplier(user.id);
   if (!supplier) redirect("/supplier/apply");
   const sp = await searchParams;
-  const raw = Array.isArray(sp.tab) ? sp.tab[0] : sp.tab;
+  const raw = one(sp.tab);
   const tab = raw && raw in TABS ? raw : "";
+  const cursor = one(sp.cursor);
 
-  const [all, districts] = await Promise.all([listSupplierOrders(supplier.id), db.district.findMany()]);
+  const [statusCounts, { items: pageOrders, nextCursor }, districts] = await Promise.all([
+    supplierOrderStatusCounts(supplier.id),
+    listSupplierOrders(supplier.id, tab ? TABS[tab] : undefined, { cursor }),
+    db.district.findMany(),
+  ]);
   const dName = new Map(districts.map((d) => [d.id, locale === "ar" ? d.nameAr : d.nameEn]));
-  const orders = all.filter((o) => !tab || TABS[tab].includes(o.status)).map(supplierOrderView);
-  const counts = Object.fromEntries(Object.entries(TABS).map(([k, v]) => [k, all.filter((o) => v.includes(o.status)).length]));
+  const orders = pageOrders.map(supplierOrderView);
+  const counts = Object.fromEntries(Object.entries(TABS).map(([k, v]) => [k, v.reduce((sum, s) => sum + (statusCounts[s] ?? 0), 0)]));
 
   const chip = (active: boolean) => `rounded-full px-3 py-1 text-sm font-semibold ${active ? "bg-aqua-600 text-white" : "bg-white text-aqua-700 ring-1 ring-line hover:bg-aqua-100"}`;
 
@@ -69,6 +76,7 @@ export default async function SupplierOrders({ searchParams }: PageProps<"/suppl
           </li>
         ))}
       </ul>
+      {nextCursor ? <Link href={`/supplier/orders?${tab ? `tab=${tab}&` : ""}cursor=${nextCursor}`} className={btnCls("secondary")}>{t("common.older")}</Link> : null}
     </div>
   );
 }

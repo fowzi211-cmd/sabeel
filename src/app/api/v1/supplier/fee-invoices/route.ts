@@ -10,7 +10,8 @@ export const GET = route({ roles: ["SUPPLIER_ADMIN"] }, async ({ req, current })
   const sp = req.nextUrl.searchParams;
   const status = z.enum(statuses).optional().parse(sp.get("status") ?? undefined);
   const q = sp.get("q")?.trim() || undefined;
+  const cursor = sp.get("cursor") ?? undefined;
   const supplier = await ownedSupplier(current.user.id);
-  const invoices = await listSupplierInvoices(supplier.id, { status, q });
-  return { invoices };
+  const { items: invoices, nextCursor } = await listSupplierInvoices(supplier.id, { status, q }, { cursor });
+  return { invoices, nextCursor };
 });

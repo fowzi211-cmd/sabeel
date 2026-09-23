@@ -11,14 +11,19 @@ import { adminOrderView, listAllOrders } from "@/server/orders";
 export const generateMetadata = pageMeta("admin.ordersTitle");
 const FILTERS: OrderStatus[] = ["AWAITING_SUPPLIER", "ESCALATED", "ACCEPTED", "ASSIGNED", "OUT_FOR_DELIVERY", "FAILED_ATTEMPT", "DELIVERED_DRIVER_CONFIRMED", "ADMIN_REVIEW", "DISPUTED", "CONFIRMED_BY_BOTH", "PAID", "CLOSED", "CANCELLED"];
 
+const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)?.trim() || undefined;
+
 export default async function AdminOrders({ searchParams }: PageProps<"/admin/orders">) {
   await requirePage({ path: "/admin/orders", roles: ["ADMIN_OPS", "ADMIN_SUPPORT", "ADMIN_FINANCE"] });
   const { t, locale } = await getI18n();
   const sp = await searchParams;
-  const raw = Array.isArray(sp.status) ? sp.status[0] : sp.status;
-  const attention = (Array.isArray(sp.attention) ? sp.attention[0] : sp.attention) === "1";
+  const raw = one(sp.status);
+  const attention = one(sp.attention) === "1";
   const status = attention ? undefined : FILTERS.find((s) => s === raw);
-  const orders = (await listAllOrders({ status, attention })).map(adminOrderView);
+  const cursor = one(sp.cursor);
+  const { items, nextCursor } = await listAllOrders({ status, attention }, { cursor });
+  const orders = items.map(adminOrderView);
+  const qs = (extra: string) => [status ? `status=${status}` : "", attention ? "attention=1" : "", extra].filter(Boolean).join("&");
 
   const tab = (active: boolean) => `rounded-full px-3 py-1 text-sm font-semibold ${active ? "bg-aqua-600 text-white" : "bg-white text-aqua-700 ring-1 ring-line hover:bg-aqua-100"}`;
 
@@ -61,6 +66,7 @@ export default async function AdminOrders({ searchParams }: PageProps<"/admin/or
           ))}
         </tbody>
       </Table>
+      {nextCursor ? <Link href={`/admin/orders?${qs(`cursor=${nextCursor}`)}`} className={btnCls("secondary")}>{t("common.older")}</Link> : null}
     </div>
   );
 }

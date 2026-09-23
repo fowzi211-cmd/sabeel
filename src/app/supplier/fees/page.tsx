@@ -1,5 +1,6 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Banner, Card, PageHeading } from "@/components/ui";
+import { Banner, Card, PageHeading, btnCls } from "@/components/ui";
 import { SupplierFeeInvoices } from "@/components/SupplierFeeInvoices";
 import { SupplierSubnav } from "@/components/SupplierSubnav";
 import { getI18n } from "@/i18n";
@@ -10,14 +11,16 @@ import { listSupplierInvoices, supplierFeeSummary } from "@/server/fees";
 import { getOwnedSupplier } from "@/server/suppliers";
 
 export const generateMetadata = pageMeta("supplierFees.title");
+const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)?.trim() || undefined;
 
-export default async function SupplierFees() {
+export default async function SupplierFees({ searchParams }: PageProps<"/supplier/fees">) {
   const { user } = await requirePage({ path: "/supplier/fees", roles: ["SUPPLIER_ADMIN"] });
   const { t, locale } = await getI18n();
   const supplier = await getOwnedSupplier(user.id);
   if (!supplier) redirect("/supplier/apply");
+  const cursor = one((await searchParams).cursor);
 
-  const [summary, invoices] = await Promise.all([supplierFeeSummary(supplier.id), listSupplierInvoices(supplier.id)]);
+  const [summary, { items: invoices, nextCursor }] = await Promise.all([supplierFeeSummary(supplier.id), listSupplierInvoices(supplier.id, {}, { cursor })]);
 
   return (
     <div>
@@ -43,6 +46,7 @@ export default async function SupplierFees() {
 
       <h2 className="mb-3 text-lg font-bold">{t("supplierFees.invoicesTitle")}</h2>
       <SupplierFeeInvoices invoices={invoices.map((i) => ({ ...i, periodStart: i.periodStart.toISOString(), periodEnd: i.periodEnd.toISOString(), dueAt: i.dueAt.toISOString(), paymentDate: i.paymentDate?.toISOString() ?? null }))} />
+      {nextCursor ? <Link href={`/supplier/fees?cursor=${nextCursor}`} className={btnCls("secondary")}>{t("common.older")}</Link> : null}
     </div>
   );
 }

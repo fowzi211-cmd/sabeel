@@ -6,6 +6,7 @@ import { AppError } from "@/lib/errors";
 import { feeHalalas, supplierKeeps, vatIncluded } from "@/lib/money";
 import { canStillReview } from "@/lib/reviews";
 import { checkRateLimit } from "@/lib/rateLimit";
+import { DEFAULT_PAGE_SIZE, paginate, type Paginated } from "@/lib/pagination";
 import { capForPaidCount, tierFor } from "@/lib/trust";
 import { currentFeePerPacket } from "./catalogue";
 import { generateSlots } from "./delivery";
@@ -400,14 +401,35 @@ export function supplierOrderView(o: OrderFull) {
   };
 }
 
-export const listBuyerOrders = (userId: string) =>
-  db.order.findMany({ where: { buyerId: userId }, include: orderInclude, orderBy: { placedAt: "desc" }, take: 100 });
+export interface ListOpts { cursor?: string; limit?: number }
+
+export async function listBuyerOrders(userId: string, opts: ListOpts = {}): Promise<Paginated<OrderFull>> {
+  const limit = opts.limit ?? DEFAULT_PAGE_SIZE;
+  const rows = await db.order.findMany({
+    where: { buyerId: userId }, include: orderInclude, orderBy: { placedAt: "desc" }, take: limit + 1,
+    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+  });
+  return paginate(rows, limit);
+}
 
 export const getBuyerOrder = (userId: string, id: string) =>
   db.order.findFirst({ where: { buyerId: userId, OR: [{ id }, { orderNo: id }] }, include: orderInclude });
 
-export const listSupplierOrders = (supplierId: string, status?: OrderStatus) =>
-  db.order.findMany({ where: { supplierId, ...(status ? { status } : {}) }, include: orderInclude, orderBy: { placedAt: "desc" }, take: 100 });
+export async function listSupplierOrders(supplierId: string, status?: OrderStatus | OrderStatus[], opts: ListOpts = {}): Promise<Paginated<OrderFull>> {
+  const limit = opts.limit ?? DEFAULT_PAGE_SIZE;
+  const statusFilter = Array.isArray(status) ? { status: { in: status } } : status ? { status } : {};
+  const rows = await db.order.findMany({
+    where: { supplierId, ...statusFilter }, include: orderInclude, orderBy: { placedAt: "desc" }, take: limit + 1,
+    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+  });
+  return paginate(rows, limit);
+}
+
+/** Counts per status, unaffected by pagination — what the supplier's order-list tabs show. */
+export async function supplierOrderStatusCounts(supplierId: string): Promise<Record<string, number>> {
+  const rows = await db.order.groupBy({ by: ["status"], where: { supplierId }, _count: true });
+  return Object.fromEntries(rows.map((r) => [r.status, r._count]));
+}
 
 export const getSupplierOrder = (supplierId: string, id: string) =>
   db.order.findFirst({ where: { supplierId, OR: [{ id }, { orderNo: id }] }, include: orderInclude });
@@ -430,11 +452,15 @@ export function attentionWhere(now: Date = new Date()): Prisma.OrderWhereInput {
   };
 }
 
-export const listAllOrders = (filter: AdminOrderFilter = {}) =>
-  db.order.findMany({
+export async function listAllOrders(filter: AdminOrderFilter = {}, opts: ListOpts = {}): Promise<Paginated<OrderFull>> {
+  const limit = opts.limit ?? DEFAULT_PAGE_SIZE;
+  const rows = await db.order.findMany({
     where: { ...(filter.status ? { status: filter.status } : {}), ...(filter.attention ? attentionWhere() : {}) },
-    include: orderInclude, orderBy: { placedAt: "desc" }, take: 200,
+    include: orderInclude, orderBy: { placedAt: "desc" }, take: limit + 1,
+    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
   });
+  return paginate(rows, limit);
+}
 
 export const getAnyOrder = (id: string) => db.order.findFirst({ where: { OR: [{ id }, { orderNo: id }] }, include: orderInclude });
 

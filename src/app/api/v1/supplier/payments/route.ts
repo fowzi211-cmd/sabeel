@@ -15,8 +15,9 @@ export const GET = route({ roles: ["SUPPLIER_ADMIN"] }, async ({ req, current })
   const from = sp.get("from") ? new Date(sp.get("from")!) : undefined;
   const to = sp.get("to") ? new Date(sp.get("to")!) : undefined;
 
+  const cursor = sp.get("cursor") ?? undefined;
   const supplier = await ownedSupplier(current.user.id);
-  const rows = await listSupplierPayments(supplier.id, { status, brandId, from, to, q });
+  const { items: rows, nextCursor } = await listSupplierPayments(supplier.id, { status, brandId, from, to, q }, { cursor });
   const payments = rows.map((p) => {
     const fee = feeHalalas(p.order.packetEqMilliTotal, 1, p.order.feePerPacketHalalas);
     const keep = supplierKeeps(p.amountHalalas, fee);
@@ -28,5 +29,5 @@ export const GET = route({ roles: ["SUPPLIER_ADMIN"] }, async ({ req, current })
     };
   });
   const totalKept = payments.filter((p) => p.status === "RECEIVED").reduce((s, p) => s + p.breakdown.keepHalalas, 0);
-  return { payments, totals: { count: payments.length, keptHalalas: totalKept, kept: formatSar(totalKept, "en") } };
+  return { payments, nextCursor, totals: { count: payments.length, keptHalalas: totalKept, kept: formatSar(totalKept, "en") } };
 });

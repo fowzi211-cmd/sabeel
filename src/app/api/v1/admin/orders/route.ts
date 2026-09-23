@@ -9,5 +9,7 @@ export const GET = route({ roles: ["ADMIN_OPS", "ADMIN_SUPPORT", "ADMIN_FINANCE"
   const sp = req.nextUrl.searchParams;
   const status = z.enum(statuses).optional().parse(sp.get("status") ?? undefined);
   const attention = sp.get("attention") === "1";
-  return { orders: (await listAllOrders({ status, attention })).map(adminOrderView) };
+  const cursor = sp.get("cursor") ?? undefined;
+  const { items, nextCursor } = await listAllOrders({ status, attention }, { cursor });
+  return { orders: items.map(adminOrderView), nextCursor };
 });

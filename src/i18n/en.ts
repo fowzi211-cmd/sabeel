@@ -41,6 +41,7 @@ export const en: Dict = {
     admin: "Admin console",
     supplierPortal: "Supplier portal",
     sar: "SAR",
+    older: "Older",
   },
   roles: {
     BUYER: "Buyer / donor",
@@ -954,7 +955,7 @@ export const en: Dict = {
       fee: "Sabeel fee",
       keep: "You keep",
     },
-    totalsLine: "{n} payments · you kept {amount}",
+    totalsLine: "{n} payments on this page · you kept {amount}",
     empty: "No payments yet.",
   },
   feeInvoice: {

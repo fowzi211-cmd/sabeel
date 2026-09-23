@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Card, Chip, PageHeading, Table, td, th } from "@/components/ui";
+import { Card, Chip, PageHeading, Table, btnCls, td, th } from "@/components/ui";
 import { SupplierSubnav } from "@/components/SupplierSubnav";
 import { getI18n } from "@/i18n";
 import { pageMeta } from "@/i18n/meta";
@@ -11,14 +11,16 @@ import { listSupplierPayments } from "@/server/payments";
 import { getOwnedSupplier } from "@/server/suppliers";
 
 export const generateMetadata = pageMeta("payments.title");
+const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)?.trim() || undefined;
 
-export default async function SupplierPayments() {
+export default async function SupplierPayments({ searchParams }: PageProps<"/supplier/payments">) {
   const { user } = await requirePage({ path: "/supplier/payments", roles: ["SUPPLIER_ADMIN"] });
   const { t, locale } = await getI18n();
   const supplier = await getOwnedSupplier(user.id);
   if (!supplier) redirect("/supplier/apply");
+  const cursor = one((await searchParams).cursor);
 
-  const rows = await listSupplierPayments(supplier.id);
+  const { items: rows, nextCursor } = await listSupplierPayments(supplier.id, {}, { cursor });
   const payments = rows.map((p) => {
     const fee = feeHalalas(p.order.packetEqMilliTotal, 1, p.order.feePerPacketHalalas);
     return { ...p, fee, keep: supplierKeeps(p.amountHalalas, fee).keep };
@@ -64,6 +66,7 @@ export default async function SupplierPayments() {
           </Table>
         </>
       ) : null}
+      {nextCursor ? <Link href={`/supplier/payments?cursor=${nextCursor}`} className={btnCls("secondary")}>{t("common.older")}</Link> : null}
     </div>
   );
 }

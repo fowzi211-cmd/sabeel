@@ -4,13 +4,14 @@ import { db } from "@/lib/db";
 import { audit, type RequestMeta } from "@/lib/audit";
 import { AppError } from "@/lib/errors";
 import {
-  accrualAmounts, ceilingBand, earnsEstablishedStatus, invoiceDueAt, invoicePauseAt, invoiceSuspendAt, isInvoiceOnTime, periodFor,
+  accrualAmounts, ceilingBand, type CeilingBand, earnsEstablishedStatus, invoiceDueAt, invoicePauseAt, invoiceSuspendAt, isInvoiceOnTime, periodFor,
 } from "@/lib/fees";
 import { ESTABLISHED_CEILING_HALALAS, FEE_CHANGE_NOTICE_DAYS, INVOICE_REMINDER_BEFORE_DAYS, ONTIME_INVOICES_FOR_ESTABLISHED } from "@/lib/fulfilment";
 import { formatSar } from "@/lib/money";
 import { deleteUpload, saveInvoiceReceipt } from "./storage";
 import { notifySupplier } from "./notify";
 import { checkRateLimit } from "@/lib/rateLimit";
+import { DEFAULT_PAGE_SIZE, paginate } from "@/lib/pagination";
 
 type Actor = { id: string; roles: Role[] };
 const TX = { timeout: 20_000, maxWait: 10_000 };
@@ -48,10 +49,28 @@ export async function supplierExposureHalalas(supplierId: string): Promise<numbe
   return (unbilled._sum.amountHalalas ?? 0) + (unbilled._sum.vatHalalas ?? 0) + (open._sum.totalHalalas ?? 0);
 }
 
-/** A per-day dedup for exposure warnings — a supplier owner should see it at most once a day, not on every order. */
-async function warnedToday(event: string, supplierId: string, now: Date): Promise<boolean> {
-  const dayStart = new Date(now); dayStart.setUTCHours(0, 0, 0, 0);
-  return !!(await db.notification.findFirst({ where: { event, payload: { path: ["supplierId"], equals: supplierId }, createdAt: { gte: dayStart } } }));
+/** Higher = closer to the ceiling. Used to tell a genuine escalation from "already warned about this". */
+const CEILING_BAND_RANK: Record<CeilingBand, number> = { ok: 0, warn70: 1, warn90: 2, over: 3 };
+
+/**
+ * The last ceiling-band event on record for this supplier, "ok" if there has never been one. Reset to
+ * "ok" by a reinstatement that was actually for the ceiling reason (an invoice_grace reinstate says
+ * nothing about whether exposure has since dropped, so it must not clear a ceiling warning), or by a
+ * fee.ceiling_cleared marker — recorded when exposure drops back to "ok" while the supplier was only
+ * warned, never paused, since nothing else observes that recovery (see checkCeilingAndPause below).
+ */
+async function lastCeilingBand(supplierId: string): Promise<CeilingBand> {
+  const n = await db.notification.findFirst({
+    where: { event: { in: ["fee.ceiling_warn70", "fee.ceiling_warn90", "fee.ceiling_paused", "fee.reinstated", "fee.ceiling_cleared"] }, payload: { path: ["supplierId"], equals: supplierId } },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!n) return "ok";
+  if (n.event === "fee.ceiling_cleared") return "ok";
+  if (n.event === "fee.ceiling_paused") return "over";
+  if (n.event === "fee.ceiling_warn90") return "warn90";
+  if (n.event === "fee.ceiling_warn70") return "warn70";
+  // fee.reinstated: only counts as "cleared" if it was the ceiling reason that got reinstated.
+  return (n.payload as { reason?: string } | null)?.reason === "ceiling" ? "ok" : "warn90"; // conservative: assume still elevated
 }
 
 /** Called after a fee accrues: warn near the ceiling, and pause automatically once exposure reaches it. */
@@ -60,6 +79,7 @@ export async function checkCeilingAndPause(supplierId: string, now: Date = new D
   if (!supplier) return;
   const exposure = await supplierExposureHalalas(supplierId);
   const band = ceilingBand(exposure, supplier.creditCeilingHalalas);
+  void now; // kept for signature symmetry with the other jobs; the dedup below no longer needs a clock
 
   if (band === "over") {
     const changed = await db.supplier.updateMany({ where: { id: supplierId, status: "ACTIVE" }, data: { status: "PAUSED", pauseReason: "ceiling" } });
@@ -71,11 +91,23 @@ export async function checkCeilingAndPause(supplierId: string, now: Date = new D
     }
     return;
   }
-  if ((band === "warn90" || band === "warn70") && !(await warnedToday(`fee.ceiling_${band}`, supplierId, now))) {
+  const last = await lastCeilingBand(supplierId);
+  // Warn only on a genuine escalation past a threshold not already warned about since the last time
+  // exposure was below it — not once per calendar day, so a supplier sitting at 75% for a week gets
+  // exactly one warning, not one every day, but a fresh rise past 90% after dropping back still warns.
+  if ((band === "warn90" || band === "warn70") && CEILING_BAND_RANK[band] > CEILING_BAND_RANK[last]) {
     await notifySupplier(supplierId, `fee.ceiling_${band}`, {
       ar: `سبيل: بلغ رصيد الرسوم المستحقة ${band === "warn90" ? "90%" : "70%"} من حدّك الائتماني (${formatSar(supplier.creditCeilingHalalas, "ar")}). سدّد فواتيرك المفتوحة لتفادي إيقاف الطلبات.`,
       en: `Sabeel: your outstanding fees reached ${band === "warn90" ? "90%" : "70%"} of your credit ceiling (${formatSar(supplier.creditCeilingHalalas, "en")}). Settle your open invoices to avoid a pause on new orders.`,
     }, { supplierId });
+  } else if (band === "ok" && CEILING_BAND_RANK[last] > 0) {
+    // Exposure dropped back to "ok" while only warned (never paused), so reinstateIfClear never ran
+    // and never recorded a fee.reinstated — without this marker lastCeilingBand would stay stuck at
+    // the old warn70/warn90, and a later re-rise past the same threshold would silently go unwarned.
+    await notifySupplier(supplierId, "fee.ceiling_cleared", {
+      ar: "سبيل: انخفض رصيد الرسوم المستحقة إلى ما دون حدّ التحذير.",
+      en: "Sabeel: your outstanding fees dropped back below the warning threshold.",
+    }, { supplierId }, { sms: false });
   }
 }
 
@@ -92,7 +124,9 @@ async function reinstateIfClear(supplierId: string, reason: "ceiling" | "invoice
   }
   const changed = await db.supplier.updateMany({ where: { id: supplierId, status: "PAUSED", pauseReason: reason }, data: { status: "ACTIVE", pauseReason: null } });
   if (changed.count > 0) {
-    await notifySupplier(supplierId, "fee.reinstated", { ar: "سبيل: أُعيد تفعيل حسابك ويمكنك استقبال طلبات جديدة.", en: "Sabeel: your account is active again and can receive new orders." }, { supplierId });
+    // `reason` in the payload lets checkCeilingAndPause() tell "cleared for real" from "cleared for
+    // an unrelated reason" when it looks back at this supplier's last ceiling-band event.
+    await notifySupplier(supplierId, "fee.reinstated", { ar: "سبيل: أُعيد تفعيل حسابك ويمكنك استقبال طلبات جديدة.", en: "Sabeel: your account is active again and can receive new orders." }, { supplierId, reason });
   }
 }
 
@@ -264,6 +298,10 @@ export async function confirmInvoicePayment(admin: Actor, invoiceId: string, met
   // Paying an invoice lowers exposure regardless of which reason paused the supplier — check both.
   await reinstateIfClear(invoice.supplierId, "ceiling");
   await reinstateIfClear(invoice.supplierId, "invoice_grace");
+  // Also re-run the ceiling check even if the supplier was never paused: this is the only place
+  // exposure actually goes down, so it's the only place a warn70/warn90-only supplier's recovery
+  // (the fee.ceiling_cleared marker) gets recorded.
+  await checkCeilingAndPause(invoice.supplierId, now);
   return db.feeInvoice.findUniqueOrThrow({ where: { id: invoiceId } });
 }
 
@@ -287,20 +325,28 @@ export async function rejectInvoicePayment(admin: Actor, invoiceId: string, inpu
 
 export interface InvoiceListFilter { status?: FeeInvoice["status"]; q?: string }
 
-export const listSupplierInvoices = (supplierId: string, filter: InvoiceListFilter = {}) =>
-  db.feeInvoice.findMany({
+export async function listSupplierInvoices(supplierId: string, filter: InvoiceListFilter = {}, opts: { cursor?: string; limit?: number } = {}) {
+  const limit = opts.limit ?? DEFAULT_PAGE_SIZE;
+  const rows = await db.feeInvoice.findMany({
     where: { supplierId, ...(filter.status ? { status: filter.status } : {}), ...(filter.q ? { invoiceNo: { contains: filter.q, mode: "insensitive" } } : {}) },
     orderBy: { issuedAt: "desc" },
-    take: 300,
+    take: limit + 1,
+    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
   });
+  return paginate(rows, limit);
+}
 
-export const listAdminInvoices = (filter: InvoiceListFilter = {}) =>
-  db.feeInvoice.findMany({
+export async function listAdminInvoices(filter: InvoiceListFilter = {}, opts: { cursor?: string; limit?: number } = {}) {
+  const limit = opts.limit ?? DEFAULT_PAGE_SIZE;
+  const rows = await db.feeInvoice.findMany({
     where: { ...(filter.status ? { status: filter.status } : {}), ...(filter.q ? { OR: [{ invoiceNo: { contains: filter.q, mode: "insensitive" } }, { supplier: { tradeName: { contains: filter.q, mode: "insensitive" } } }] } : {}) },
     include: { supplier: { select: { id: true, tradeName: true, legalNameAr: true } } },
     orderBy: { issuedAt: "desc" },
-    take: 300,
+    take: limit + 1,
+    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
   });
+  return paginate(rows, limit);
+}
 
 export const getInvoiceWithAccruals = (id: string) =>
   db.feeInvoice.findUnique({ where: { id }, include: { accruals: { include: { order: { select: { orderNo: true } } } }, supplier: { select: { id: true, tradeName: true, legalNameAr: true, bankAccounts: { where: { status: "ACTIVE" }, take: 1 } } } } });

@@ -1,5 +1,6 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
-import { PageHeading } from "@/components/ui";
+import { PageHeading, btnCls } from "@/components/ui";
 import { SupplierReviewsList } from "@/components/SupplierReviewsList";
 import { SupplierSubnav } from "@/components/SupplierSubnav";
 import { getI18n } from "@/i18n";
@@ -10,14 +11,16 @@ import { getOwnedSupplier } from "@/server/suppliers";
 
 export const generateMetadata = pageMeta("supplierReviews.title");
 const firstName = (full: string | null) => (full ?? "").trim().split(/\s+/)[0] || "—";
+const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)?.trim() || undefined;
 
-export default async function SupplierReviews() {
+export default async function SupplierReviews({ searchParams }: PageProps<"/supplier/reviews">) {
   const { user } = await requirePage({ path: "/supplier/reviews", roles: ["SUPPLIER_ADMIN"] });
   const { t } = await getI18n();
   const supplier = await getOwnedSupplier(user.id);
   if (!supplier) redirect("/supplier/apply");
+  const cursor = one((await searchParams).cursor);
 
-  const reviews = await listSupplierReviews(supplier.id);
+  const { items: reviews, nextCursor } = await listSupplierReviews(supplier.id, { cursor });
 
   return (
     <div>
@@ -30,6 +33,7 @@ export default async function SupplierReviews() {
           reply: r.reply ? { text: r.reply.text, createdAt: r.reply.createdAt.toISOString() } : null,
         }))}
       />
+      {nextCursor ? <Link href={`/supplier/reviews?cursor=${nextCursor}`} className={btnCls("secondary")}>{t("common.older")}</Link> : null}
     </div>
   );
 }

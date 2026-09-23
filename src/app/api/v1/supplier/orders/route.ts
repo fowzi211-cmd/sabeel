@@ -10,5 +10,7 @@ export const GET = route({ roles: ["SUPPLIER_ADMIN"] }, async ({ req, current })
   const supplier = await db.supplier.findFirst({ where: { members: { some: { userId: current.user.id, role: "OWNER" } } } });
   if (!supplier) throw new AppError("NOT_FOUND");
   const s = status.parse(req.nextUrl.searchParams.get("status") ?? undefined);
-  return { orders: (await listSupplierOrders(supplier.id, s)).map(supplierOrderView) };
+  const cursor = req.nextUrl.searchParams.get("cursor") ?? undefined;
+  const { items, nextCursor } = await listSupplierOrders(supplier.id, s, { cursor });
+  return { orders: items.map(supplierOrderView), nextCursor };
 });
