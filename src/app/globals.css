@@ -1,26 +1,71 @@
 @import "tailwindcss";
 
+/* Sabeel design tokens (design pack §11). Logical properties (ms-/me-/ps-/pe-, text-start) are
+   used throughout so the Arabic right-to-left layout is the same code as the English one. */
+@theme {
+  --color-aqua-700: #075e70;
+  --color-aqua-600: #0b7a8f;
+  --color-aqua-500: #1290a7;
+  --color-aqua-100: #e3f3f6;
+  --color-ink: #10222b;
+  --color-muted: #5b6e77;
+  --color-line: #d9e4e8;
+  --color-page: #f6fafb;
+  --color-star: #f2a93b;
+  --color-ok: #1f9d6b;
+  --color-ok-bg: #e4f5ec;
+  --color-warn: #b87400;
+  --color-warn-bg: #fff2d9;
+  --color-bad: #c8412f;
+  --color-bad-bg: #fbe7e3;
+  --font-sans: var(--font-plex-arabic), var(--font-inter), system-ui, "Segoe UI", Tahoma, sans-serif;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  background: var(--color-page);
+  color: var(--color-ink);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.55;
+  min-height: 100vh;
+}
+
+/* Visible keyboard focus everywhere (WCAG 2.2). */
+:focus-visible {
+  outline: 3px solid var(--color-aqua-500);
+  outline-offset: 2px;
+}
+
+/* Numbers, IBANs, hashes and codes keep left-to-right order inside Arabic text. */
+.ltr-iso {
+  direction: ltr;
+  unicode-bidi: isolate;
+  display: inline-block;
+}
+
+.agreement-text h3 {
+  font-weight: 700;
+  margin-top: 1.1rem;
+  margin-bottom: 0.25rem;
+  color: var(--color-aqua-700);
+}
+.agreement-text p {
+  margin: 0.25rem 0;
+}
+
+@media print {
+  header,
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
 }

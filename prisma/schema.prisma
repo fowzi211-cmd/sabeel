@@ -1,0 +1,1078 @@
+// Sabeel — slice 1 schema: accounts, supplier onboarding, Brand Registry, online agreements.
+// Money is never stored here as a balance: amounts are integer halalas, and no column
+// holds customer funds or card data (design pack §5.3).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  BUYER
+  SUPPLIER_ADMIN
+  DRIVER
+  ADMIN_OPS
+  ADMIN_SUPPORT
+  ADMIN_FINANCE
+  SUPER_ADMIN
+}
+
+enum Lang {
+  AR
+  EN
+}
+
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+}
+
+enum OtpPurpose {
+  LOGIN
+  SIGN
+  DELIVERY
+}
+
+enum SupplierType {
+  BRAND_COMPANY
+  INDEPENDENT
+}
+
+enum RegistrationKind {
+  CR
+  FREELANCE
+}
+
+enum SupplierStatus {
+  DRAFT
+  PENDING
+  NEEDS_INFO
+  ACTIVE
+  PAUSED
+  SUSPENDED
+  REJECTED
+  OFFBOARDED
+}
+
+enum SupplierMemberRole {
+  OWNER
+  STAFF
+}
+
+enum InvoiceCycle {
+  WEEKLY
+  MONTHLY
+}
+
+enum DocKind {
+  CR
+  VAT_CERT
+  MUNICIPAL_LICENSE
+  BRAND_AUTHORIZATION
+  QUALITY_CERT
+  NATIONAL_ID
+  DRIVER_LICENSE
+  VEHICLE_REGISTRATION
+  SOURCING_INVOICE
+  OTHER
+}
+
+enum DocStatus {
+  UPLOADED
+  VERIFIED
+  REJECTED
+}
+
+enum BankStatus {
+  PENDING
+  ACTIVE
+  REPLACED
+  REJECTED
+}
+
+enum BrandStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum TermsType {
+  SUPPLIER_AGREEMENT
+  INDEPENDENT_AGREEMENT
+  BUYER_TERMS
+  DRIVER_ACK
+}
+
+enum AcceptanceMethod {
+  CLICK_WRAP_OTP
+  CLICK_WRAP_SESSION
+}
+
+enum NotifChannel {
+  SMS
+  EMAIL
+  IN_APP
+}
+
+enum NotifStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+enum FeeScope {
+  GLOBAL
+  SUPPLIER_TYPE
+  SUPPLIER
+  PACK_SIZE
+  PROMO
+}
+
+enum FeeModel {
+  FIXED_PER_PACKET
+  FIXED_PER_BOTTLE
+  PERCENTAGE
+  FLAT_PER_ORDER
+}
+
+// ───────────────────────── Identity ─────────────────────────
+
+model User {
+  id               String     @id @default(cuid())
+  mobile           String     @unique // normalized +9665XXXXXXXX
+  name             String?
+  email            String?
+  language         Lang       @default(AR)
+  roles            Role[]     @default([BUYER])
+  status           UserStatus @default(ACTIVE)
+  mobileVerifiedAt DateTime?
+  totpSecretEnc    String? // AES-256-GCM, never returned by the API
+  totpEnabledAt    DateTime?
+  totpLastStep     Int? // last accepted 30 s step — blocks code replay
+  trustTier        Int        @default(1)
+  /// Orders paid (however late). Kept for visibility; the trust tier is driven by paidOnTimeCount.
+  paidOrdersCount  Int        @default(0)
+  /// Orders confirmed AND paid by their due date — what actually grows the spending cap (R06).
+  paidOnTimeCount  Int        @default(0)
+  restrictedUntil  DateTime?
+  lastLoginAt      DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  sessions            Session[]
+  supplierMemberships SupplierMember[]
+  acceptances         TermsAcceptance[]
+  notifications       Notification[]
+  orders              Order[]
+  sites               Site[]
+  driverProfiles      Driver[]
+  reviews             Review[]
+}
+
+model Session {
+  id            String    @id @default(cuid())
+  userId        String
+  tokenHash     String    @unique // sha256 of the cookie token; the raw token is never stored
+  createdAt     DateTime  @default(now())
+  lastSeenAt    DateTime  @default(now())
+  expiresAt     DateTime
+  mfaVerifiedAt DateTime?
+  revokedAt     DateTime?
+  ip            String?
+  userAgent     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model OtpChallenge {
+  id          String     @id // random uuid, part of the HMAC input
+  mobile      String
+  purpose     OtpPurpose
+  context     String? // e.g. "terms:SUPPLIER_AGREEMENT:1.0" for signing
+  userId      String?
+  codeHash    String
+  attempts    Int        @default(0)
+  maxAttempts Int        @default(5)
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  ip          String?
+  createdAt   DateTime   @default(now())
+
+  @@index([mobile, createdAt])
+  @@index([ip, createdAt])
+}
+
+// ───────────────────────── Suppliers ─────────────────────────
+
+model Supplier {
+  id                      String           @id @default(cuid())
+  type                    SupplierType
+  status                  SupplierStatus   @default(DRAFT)
+  pauseReason             String?
+  legalNameAr             String
+  legalNameEn             String?
+  tradeName               String?
+  registrationKind        RegistrationKind @default(CR)
+  crNumber                String           @unique
+  vatNumber               String?
+  city                    String           @default("Makkah")
+  contactName             String
+  contactMobile           String
+  contactEmail            String?
+  // Independent distributors only. The ID/Iqama number is encrypted at rest.
+  idNumberEnc             String?
+  idNumberLast4           String?
+  vehiclePlate            String?
+  driverLicenseNo         String?
+  creditCeilingHalalas    Int
+  invoiceCycle            InvoiceCycle     @default(MONTHLY)
+  probationDeliveriesLeft Int              @default(0)
+  submittedAt             DateTime?
+  decidedAt               DateTime?
+  decidedById             String?
+  decisionNote            String?
+  createdAt               DateTime         @default(now())
+  updatedAt               DateTime         @updatedAt
+
+  /// Consecutive fee invoices paid by their due date — what actually raises the ceiling and drops WEEKLY → MONTHLY.
+  onTimeInvoiceCount Int @default(0)
+
+  members      SupplierMember[]
+  documents    SupplierDocument[]
+  bankAccounts BankAccount[]
+  acceptances  TermsAcceptance[]
+  offers       Offer[]
+  zones        CoverageZone[]
+  orders       Order[]
+  drivers      Driver[]
+  allocations  OrderAllocation[]
+  feeAccruals  FeeAccrual[]
+  feeInvoices  FeeInvoice[]
+  reviews      Review[]
+
+  @@index([status])
+}
+
+model SupplierMember {
+  id         String             @id @default(cuid())
+  supplierId String
+  userId     String
+  role       SupplierMemberRole @default(OWNER)
+  createdAt  DateTime           @default(now())
+
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([supplierId, userId])
+}
+
+model SupplierDocument {
+  id           String    @id @default(cuid())
+  supplierId   String
+  kind         DocKind
+  fileKey      String // path under STORAGE_DIR — never served from /public
+  originalName String
+  mime         String
+  size         Int
+  sha256       String
+  number       String?
+  issuedAt     DateTime?
+  expiresAt    DateTime?
+  status       DocStatus @default(UPLOADED)
+  reviewedById String?
+  reviewedAt   DateTime?
+  rejectReason String?
+  createdAt    DateTime  @default(now())
+
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@index([supplierId, kind])
+  @@index([expiresAt])
+}
+
+model BankAccount {
+  id            String     @id @default(cuid())
+  supplierId    String
+  iban          String
+  holderName    String
+  bankName      String?
+  status        BankStatus @default(PENDING)
+  cooldownUntil DateTime? // change of an active account waits out a cool-down
+  reviewedById  String?
+  reviewedAt    DateTime?
+  rejectReason  String?
+  activatedAt   DateTime?
+  createdAt     DateTime   @default(now())
+
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@index([supplierId, status])
+}
+
+// ───────────────────────── Brand Registry ─────────────────────────
+
+model Brand {
+  id          String      @id @default(cuid())
+  nameAr      String
+  nameEn      String
+  sfdaRef     String      @unique
+  status      BrandStatus @default(ACTIVE)
+  notes       String?
+  createdById String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  offers Offer[]
+
+  @@index([status])
+}
+
+// ───────────────────────── Agreements ─────────────────────────
+
+model TermsDocument {
+  id              String    @id @default(cuid())
+  type            TermsType
+  version         String
+  titleAr         String
+  titleEn         String
+  bodyAr          String
+  bodyEn          String
+  sha256Ar        String
+  sha256En        String
+  noticeDays      Int       @default(30)
+  effectiveFrom   DateTime
+  publishedById   String?
+  publishedAt     DateTime  @default(now())
+  legalReviewedAt DateTime? // null = draft still awaiting counsel review
+  supersededAt    DateTime?
+
+  acceptances TermsAcceptance[]
+
+  @@unique([type, version])
+}
+
+model TermsAcceptance {
+  id               String           @id @default(cuid())
+  certificateNo    String           @unique // SBL-AGR-2026-000001
+  userId           String
+  supplierId       String?
+  termsDocumentId  String
+  termsType        TermsType
+  version          String
+  sha256Ar         String
+  sha256En         String
+  languageShown    Lang
+  signatoryName    String
+  authorisedToBind Boolean          @default(false)
+  method           AcceptanceMethod
+  otpChallengeId   String?
+  acceptedAt       DateTime         @default(now())
+  ip               String?
+  userAgent        String?
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  supplier      Supplier?     @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  termsDocument TermsDocument @relation(fields: [termsDocumentId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, supplierId, termsDocumentId])
+  @@index([supplierId])
+}
+
+// ───────────────────────── Fees (read-only in slice 1) ─────────────────────────
+
+model FeeRule {
+  id            String   @id @default(cuid())
+  scope         FeeScope
+  scopeRef      String?
+  model         FeeModel @default(FIXED_PER_PACKET)
+  amountHalalas Int
+  effectiveFrom DateTime
+  reason        String
+  createdById   String?
+  createdAt     DateTime @default(now())
+
+  @@index([scope, effectiveFrom])
+}
+
+// ───────────────────────── Audit & notifications ─────────────────────────
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actorRole String?
+  action    String
+  entity    String
+  entityId  String?
+  before    Json?
+  after     Json?
+  note      String?
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([actorId, createdAt])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        String       @id @default(cuid())
+  userId    String?
+  mobile    String?
+  channel   NotifChannel
+  event     String
+  payload   Json?
+  status    NotifStatus  @default(QUEUED)
+  provider  String?
+  error     String?
+  readAt    DateTime?
+  sentAt    DateTime?
+  createdAt DateTime     @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([channel, status])
+}
+
+// ═════════════════════════ Slice 2: catalogue, delivery zones, sites, orders ═════════════════════════
+
+enum StockLevel {
+  IN_STOCK
+  LIMITED
+  OUT
+}
+
+enum OrderType {
+  DONATION
+  SELF_USE
+}
+
+/// Full lifecycle from design pack §6.1; slice 2 only creates AWAITING_SUPPLIER and CANCELLED.
+enum OrderStatus {
+  DRAFT
+  AWAITING_SUPPLIER
+  ACCEPTED
+  ASSIGNED
+  OUT_FOR_DELIVERY
+  DELIVERED_DRIVER_CONFIRMED
+  ADMIN_REVIEW
+  CONFIRMED_BY_BOTH
+  PAID
+  CLOSED
+  DECLINED
+  EXPIRED
+  ESCALATED
+  FAILED_ATTEMPT
+  DISPUTED
+  CANCELLED
+}
+
+/// A delivery district (Makkah first). Platform-owned: admins set restricted areas and rules (design pack R13).
+model District {
+  id                  String   @id @default(cuid())
+  city                String   @default("Makkah")
+  slug                String   @unique
+  nameAr              String
+  nameEn              String
+  restricted          Boolean  @default(false)
+  restrictedReason    String? // Arabic (primary)
+  restrictedReasonEn  String? // English
+  gpsRadiusM          Int      @default(100)
+  deliveryStart       String   @default("08:00") // Asia/Riyadh, HH:MM
+  deliveryEnd         String   @default("22:00")
+  fridayBlackoutStart String?  @default("11:00") // Jumu'ah window with no deliveries
+  fridayBlackoutEnd   String?  @default("14:00")
+  active              Boolean  @default(true)
+  sortOrder           Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  zones CoverageZone[]
+  sites Site[]
+}
+
+/// A supplier's promise to serve one district, with its own delivery fee (SAR, VAT included) and lead time.
+model CoverageZone {
+  id                 String   @id @default(cuid())
+  supplierId         String
+  districtId         String
+  deliveryFeeHalalas Int      @default(0)
+  leadTimeHours      Int      @default(24)
+  active             Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  district District @relation(fields: [districtId], references: [id], onDelete: Restrict)
+
+  @@unique([supplierId, districtId])
+  @@index([districtId, active])
+}
+
+/// One sellable pack of one registered brand: e.g. Nova 500 ml × 20 bottles at SAR 9.00 (VAT included).
+model Offer {
+  id             String     @id @default(cuid())
+  supplierId     String
+  brandId        String
+  bottleMl       Int
+  bottlesPerPack Int        @default(20)
+  /// Thousandths of a "packet" (20 bottles = 1000). Drives the platform fee so other pack sizes stay fair.
+  packetEqMilli  Int
+  priceHalalas   Int // per pack, VAT included
+  minQtyPacks    Int        @default(1)
+  stock          StockLevel @default(IN_STOCK)
+  active         Boolean    @default(true)
+  validFrom      DateTime?
+  validTo        DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  brand    Brand    @relation(fields: [brandId], references: [id], onDelete: Restrict)
+
+  @@unique([supplierId, brandId, bottleMl, bottlesPerPack])
+  @@index([active, stock])
+}
+
+/// A buyer's saved destination. Recipient details are private to the buyer until an order is accepted.
+model Site {
+  id              String    @id @default(cuid())
+  userId          String
+  label           String
+  districtId      String
+  lat             Float
+  lng             Float
+  nationalAddress String?
+  landmark        String?
+  accessNotes     String?
+  recipientName   String?
+  recipientMobile String?
+  deletedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  district District @relation(fields: [districtId], references: [id], onDelete: Restrict)
+
+  @@index([userId, deletedAt])
+}
+
+model Order {
+  id         String      @id @default(cuid())
+  orderNo    String      @unique // SBL-2026-000123
+  buyerId    String
+  supplierId String
+  type       OrderType
+  status     OrderStatus @default(AWAITING_SUPPLIER)
+
+  anonymous      Boolean @default(false)
+  buyerFirstName String? // what suppliers may see (never the full name or mobile)
+  buyerTier      Int     @default(1)
+
+  // Destination snapshot: later edits to the saved site never change an existing order.
+  siteId          String?
+  districtId      String
+  lat             Float
+  lng             Float
+  nationalAddress String?
+  landmark        String?
+  accessNotes     String?
+  recipientName   String?
+  recipientMobile String?
+
+  windowStart DateTime
+  windowEnd   DateTime
+  acceptBy    DateTime // supplier SLA deadline
+
+  // Money in halalas. Prices are VAT-inclusive; vatHalalas is the VAT contained in totalHalalas.
+  goodsHalalas        Int
+  deliveryHalalas     Int
+  totalHalalas        Int
+  vatHalalas          Int
+  /// Platform fee rate in force when the order was placed (SAR 0.50 = 50) — never changed later.
+  feePerPacketHalalas Int
+  packetEqMilliTotal  Int // Σ packs × packet-equivalents (thousandths)
+
+  note           String?
+  idempotencyKey String?
+  cancelReason   String?
+  cancelledAt    DateTime?
+  placedAt       DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // ── Confirmation & payment (slice 4) ──
+  /// Who last confirmed receipt and how — the buyer themself, or an admin after 72 h of silence or a dispute.
+  confirmedAt          DateTime?
+  confirmedById        String?
+  confirmMethod        ConfirmMethod?
+  /// Set only when a dispute lowers the price before payment becomes due; otherwise totalHalalas is what is owed.
+  adjustedTotalHalalas Int?
+  closedAt             DateTime?
+
+  buyer       User              @relation(fields: [buyerId], references: [id], onDelete: Restrict)
+  supplier    Supplier          @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  items       OrderItem[]
+  events      OrderEvent[]
+  allocations OrderAllocation[]
+  delivery    Delivery?
+  payment     PaymentRecord?
+  disputes    Dispute[]
+  feeAccrual  FeeAccrual?
+  review      Review?
+
+  @@unique([buyerId, idempotencyKey])
+  @@index([supplierId, status])
+  @@index([buyerId, createdAt])
+  @@index([status, createdAt])
+}
+
+enum ConfirmMethod {
+  BUYER
+  ADMIN_SILENCE // 72 h with no response from the buyer
+  ADMIN_DISPUTE // dispute resolved in the supplier's favour (dismiss / price adjustment)
+}
+
+/// Price and brand snapshot per line — later catalogue edits never rewrite history.
+model OrderItem {
+  id                String  @id @default(cuid())
+  orderId           String
+  offerId           String?
+  brandId           String
+  brandNameAr       String
+  brandNameEn       String
+  bottleMl          Int
+  bottlesPerPack    Int
+  packetEqMilli     Int
+  unitPriceHalalas  Int
+  qtyPacks          Int
+  lineTotalHalalas  Int
+  /// Packs actually delivered (set once, with the proof of delivery). Null until then.
+  deliveredQtyPacks Int?
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+/// Append-only timeline shown to the buyer.
+model OrderEvent {
+  id        String   @id @default(cuid())
+  orderId   String
+  type      String
+  actorId   String?
+  note      String?
+  createdAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+}
+
+// ═════════════════════════ Slice 3: acceptance, drivers, delivery & proof ═════════════════════════
+
+enum AllocationStatus {
+  OFFERED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  /// Released by the supplier after accepting, or taken back by the platform.
+  WITHDRAWN
+}
+
+/// Every supplier an order has been offered to, in order (design pack R10). Feeds acceptance-rate metrics later.
+model OrderAllocation {
+  id            String           @id @default(cuid())
+  orderId       String
+  supplierId    String
+  seq           Int
+  status        AllocationStatus @default(OFFERED)
+  totalHalalas  Int
+  offeredAt     DateTime         @default(now())
+  acceptBy      DateTime
+  respondedAt   DateTime?
+  respondedById String?
+  declineReason String? // code: OUT_OF_STOCK | CANNOT_MEET_WINDOW | TOO_FAR | PRICE_CHANGED | OTHER
+  declineNote   String?
+
+  order    Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  @@unique([orderId, supplierId])
+  @@unique([orderId, seq])
+  @@index([supplierId, status])
+}
+
+/// A person who delivers for a supplier. Independent distributors and owners can list themselves.
+model Driver {
+  id           String   @id @default(cuid())
+  supplierId   String
+  userId       String
+  vehiclePlate String?
+  licenceNo    String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  supplier   Supplier   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Restrict)
+  deliveries Delivery[]
+
+  @@unique([supplierId, userId])
+  @@index([userId, active])
+}
+
+enum DeliveryStatus {
+  ASSIGNED
+  EN_ROUTE
+  ARRIVED
+  DELIVERED
+  FAILED
+}
+
+/// One delivery per order (design pack §5). A failed trip is an attempt; the delivery can be rescheduled.
+model Delivery {
+  id            String         @id @default(cuid())
+  orderId       String         @unique
+  driverId      String
+  status        DeliveryStatus @default(ASSIGNED)
+  attempts      Int            @default(0)
+  assignedAt    DateTime       @default(now())
+  startedAt     DateTime?
+  arrivedAt     DateTime?
+  deliveredAt   DateTime?
+  /// The driver may propose a corrected pin; it never overwrites the buyer's own pin.
+  pinLat        Float?
+  pinLng        Float?
+  pinNote       String?
+  pinProposedAt DateTime?
+  otpSentAt     DateTime?
+  otpVerifiedAt DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  order      Order             @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  driver     Driver            @relation(fields: [driverId], references: [id], onDelete: Restrict)
+  attemptLog DeliveryAttempt[]
+  photos     ProofPhoto[]
+  /// One per successful attempt — usually just one, but a REDELIVER dispute outcome can produce a second
+  /// (design pack: evidence is append-only, so the first attempt's proof is kept, never overwritten).
+  proofs     ProofOfDelivery[]
+
+  @@index([driverId, status])
+}
+
+enum AttemptOutcome {
+  IN_PROGRESS
+  DELIVERED
+  FAILED
+}
+
+model DeliveryAttempt {
+  id         String         @id @default(cuid())
+  deliveryId String
+  n          Int
+  driverId   String
+  startedAt  DateTime
+  arrivedAt  DateTime?
+  endedAt    DateTime?
+  outcome    AttemptOutcome @default(IN_PROGRESS)
+  failReason String? // RECIPIENT_ABSENT | WRONG_ADDRESS | ACCESS_BLOCKED | RECIPIENT_REFUSED | VEHICLE_PROBLEM | OTHER
+  failNote   String?
+  lat        Float?
+  lng        Float?
+
+  delivery Delivery @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+
+  @@unique([deliveryId, n])
+}
+
+enum PhotoKind {
+  BRAND_LABEL
+  DELIVERED_GOODS
+  SITE
+  FAILURE
+}
+
+/// A photo taken inside the app. Immutable once stored (database trigger). Bytes live in private storage.
+model ProofPhoto {
+  id         String    @id @default(cuid())
+  deliveryId String
+  attempt    Int
+  /// Chosen by the phone, so an offline retry can never store the same photo twice.
+  clientId   String
+  kind       PhotoKind
+  fileKey    String
+  mime       String
+  size       Int
+  sha256     String
+  lat        Float?
+  lng        Float?
+  accuracyM  Float?
+  capturedAt DateTime // device clock
+  receivedAt DateTime  @default(now())
+  /// CAMERA = live capture in the app; FILE = fell back to the file picker (flagged for review).
+  source     String    @default("CAMERA")
+  flags      String[]
+
+  delivery Delivery @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+
+  @@unique([deliveryId, clientId])
+  @@index([sha256])
+}
+
+/// Evidence that a delivery happened. Written once; only the admin review columns may change afterwards.
+model ProofOfDelivery {
+  id                     String    @id @default(cuid())
+  deliveryId             String
+  attempt                Int
+  lat                    Float?
+  lng                    Float?
+  accuracyM              Float?
+  distanceM              Int?
+  radiusM                Int
+  radiusOk               Boolean
+  outsideReason          String?
+  brandPhotoOk           Boolean
+  recipientOtpOk         Boolean
+  otpBypassReason        String?
+  batchNote              String?
+  notes                  String?
+  partial                Boolean   @default(false)
+  deliveredGoodsHalalas  Int
+  deliveredTotalHalalas  Int
+  deliveredVatHalalas    Int
+  deliveredPacketEqMilli Int
+  deliveredFeeHalalas    Int
+  /// Device clock when the driver pressed "confirm" — differs from submittedAt when the phone was offline.
+  confirmedAtDevice      DateTime
+  submittedAt            DateTime  @default(now())
+  submittedOffline       Boolean   @default(false)
+  flags                  String[]
+  reviewRequired         Boolean   @default(false)
+  reviewReasons          String[]
+  reviewedById           String?
+  reviewedAt             DateTime?
+  reviewOutcome          String? // OK | SUSPICIOUS
+  reviewNote             String?
+
+  delivery Delivery @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+
+  @@unique([deliveryId, attempt])
+  @@index([reviewRequired, reviewedAt])
+}
+
+// ═════════════════════════ Slice 4: confirmation, payment tracking, disputes ═════════════════════════
+
+enum PaymentStatus {
+  NOT_DUE
+  DUE
+  BUYER_MARKED_PAID
+  RECEIVED
+  OVERDUE
+  DISPUTED
+  VOID
+}
+
+/// Status and evidence only — no money or card data ever lives here (design pack §5.3 rule 6).
+/// One per order, created the moment both confirmations are in (T12/T14).
+model PaymentRecord {
+  id            String        @id @default(cuid())
+  orderId       String        @unique
+  transactionNo String        @unique // SBL-PAY-2026-000123
+  status        PaymentStatus @default(DUE)
+  amountHalalas Int
+  dueAt         DateTime
+
+  // What the buyer told us after paying outside the platform.
+  paymentDate    DateTime?
+  bankReference  String?
+  receiptFileKey String?
+  receiptMime    String?
+  markedPaidAt   DateTime?
+
+  // The supplier's side.
+  receivedById    String?
+  receivedAt      DateTime?
+  notReceivedNote String?
+  notReceivedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([status, dueAt])
+}
+
+enum DisputeCategory {
+  NOT_DELIVERED
+  SHORT
+  WRONG_BRAND
+  DAMAGED
+  LATE
+  NON_PAYMENT
+  OTHER
+}
+
+enum DisputeOpenedBy {
+  BUYER
+  SUPPLIER
+  ADMIN
+}
+
+enum DisputeStatus {
+  OPEN
+  RESOLVED
+}
+
+enum DisputeOutcome {
+  REDELIVER
+  PRICE_ADJUSTMENT
+  CANCEL
+  DISMISS
+  PAYMENT_RECEIVED
+  PAYMENT_STILL_DUE
+  PAYMENT_VOID
+}
+
+/// A NON_PAYMENT dispute pauses the PaymentRecord only; every other category pauses the order itself
+/// (design pack T15: only reachable from DELIVERED_DRIVER_CONFIRMED / ADMIN_REVIEW, i.e. before payment is due).
+model Dispute {
+  id             String          @id @default(cuid())
+  orderId        String
+  category       DisputeCategory
+  openedBy       DisputeOpenedBy
+  openedById     String
+  status         DisputeStatus   @default(OPEN)
+  note           String
+  outcome        DisputeOutcome?
+  resolvedById   String?
+  resolvedAt     DateTime?
+  resolutionNote String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, status])
+  @@index([status, category])
+}
+
+// ═════════════════════════ Slice 5: fee accrual, invoicing, reviews ═════════════════════════
+
+/// The platform's own record of what one order owes in fees — created the moment the order is confirmed,
+/// from the DELIVERED quantity (design pack: "fee uses delivered quantity"), independent of whether the
+/// buyer has paid the supplier yet. This is the only place a fee amount is ever decided (FR-FEE-11): the
+/// supplier can see it but never sets or edits it.
+model FeeAccrual {
+  id                   String   @id @default(cuid())
+  orderId              String   @unique
+  supplierId           String
+  packetEqMilli        Int // delivered packet-equivalents, thousandths
+  ratePerPacketHalalas Int
+  amountHalalas        Int // the fee itself
+  vatHalalas           Int // 15% VAT on the fee
+  invoiceId            String?
+  accruedAt            DateTime @default(now())
+
+  order    Order       @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  supplier Supplier    @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  invoice  FeeInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@index([supplierId, invoiceId])
+  @@index([invoiceId])
+}
+
+enum FeeInvoiceStatus {
+  ISSUED
+  PAYMENT_SUBMITTED
+  PAID
+  OVERDUE
+}
+
+/// Generated by the system only, from Sabeel's own accrual records (FR-FEE-11) — never typed by the supplier.
+/// Due in 7 days; 7 days' grace; then the escalation ladder pauses and eventually suspends the supplier.
+model FeeInvoice {
+  id              String           @id @default(cuid())
+  invoiceNo       String           @unique // SBL-INV-2026-000045
+  supplierId      String
+  periodStart     DateTime
+  periodEnd       DateTime
+  subtotalHalalas Int
+  vatHalalas      Int
+  totalHalalas    Int
+  status          FeeInvoiceStatus @default(ISSUED)
+  issuedAt        DateTime         @default(now())
+  dueAt           DateTime
+
+  // What the supplier told us after paying outside the platform.
+  paymentDate    DateTime?
+  bankReference  String?
+  receiptFileKey String?
+  receiptMime    String?
+  submittedAt    DateTime?
+
+  // Admin's side.
+  confirmedById String?
+  confirmedAt   DateTime?
+  rejectReason  String?
+  rejectedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  supplier Supplier     @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  accruals FeeAccrual[]
+
+  @@index([supplierId, status])
+  @@index([status, dueAt])
+}
+
+/// Verified only: one per order, from the buyer of a confirmed delivery. Write-once — evidence, not a wiki
+/// page (design pack: the supplier may reply once but never edit or delete it; only admin can remove one).
+model Review {
+  id            String    @id @default(cuid())
+  orderId       String    @unique
+  buyerId       String
+  supplierId    String
+  stars         Int // overall, 1–5
+  timeliness    Int?
+  asOrdered     Int?
+  packaging     Int?
+  driverConduct Int?
+  value         Int?
+  comment       String?
+  language      Lang
+  photoFileKey  String?
+  photoMime     String?
+  removedById   String?
+  removedAt     DateTime?
+  removeReason  String?
+  createdAt     DateTime  @default(now())
+
+  order    Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  supplier Supplier     @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  buyer    User         @relation(fields: [buyerId], references: [id], onDelete: Restrict)
+  reply    ReviewReply?
+
+  @@index([supplierId, removedAt])
+  @@index([buyerId])
+}
+
+/// The supplier's one reply to a review. Cannot be edited or deleted through the app.
+model ReviewReply {
+  id             String   @id @default(cuid())
+  reviewId       String   @unique
+  supplierUserId String
+  text           String
+  createdAt      DateTime @default(now())
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Restrict)
+}

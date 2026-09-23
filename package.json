@@ -3,24 +3,49 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3020",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "start": "next start -p 3020",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:migrate": "prisma migrate deploy",
+    "db:generate": "prisma generate",
+    "db:seed": "tsx --env-file=.env prisma/seed.ts",
+    "db:seed:demo": "tsx --env-file=.env prisma/seed.ts --demo",
+    "verify": "tsx --env-file=.env scripts/verify-slice1.ts",
+    "verify:2": "tsx --env-file=.env scripts/verify-slice2.ts",
+    "verify:3": "tsx --env-file=.env scripts/verify-slice3.ts",
+    "jobs:run": "tsx --env-file=.env scripts/run-jobs.ts",
+    "verify:4": "tsx --env-file=.env scripts/verify-slice4.ts",
+    "verify:5": "tsx --env-file=.env scripts/verify-slice5.ts",
+    "verify:6": "tsx --env-file=.env scripts/verify-slice6.ts",
+    "db:backup": "tsx --env-file=.env scripts/backup.ts",
+    "db:restore": "tsx --env-file=.env scripts/restore.ts"
   },
   "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "leaflet": "^1.9.4",
     "next": "16.3.5",
+    "otpauth": "^9.5.2",
+    "qrcode": "^1.5.4",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/leaflet": "^1.9.22",
     "@types/node": "^20",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
+    "prisma": "^6.19.3",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "tsx": "^4.23.15",
+    "typescript": "^5",
+    "vitest": "^2.1.9"
   }
 }

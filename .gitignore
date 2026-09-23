@@ -30,8 +30,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files — the template is meant to be committed, real values never are
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +40,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Uploaded supplier documents (private) — never commit
+/storage
+
+# Local database backups (scripts/backup.ts) — never commit
+/backups
