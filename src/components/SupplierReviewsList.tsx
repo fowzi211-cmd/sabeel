@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/client-api";
 import { fmtWhen } from "@/lib/format";
 import { useI18n } from "@/i18n/provider";
-import { Banner, Card, btnCls, inputCls } from "./ui";
+import { Banner, Card, Chip, btnCls, inputCls } from "./ui";
 
 export interface SupplierReviewRow {
   id: string;
@@ -15,6 +15,7 @@ export interface SupplierReviewRow {
   orderNo: string;
   buyerFirstName: string;
   reply: { text: string; createdAt: string | Date } | null;
+  flag: { status: "OPEN" | "DISMISSED" | "UPHELD" } | null;
 }
 
 const Stars = ({ n }: { n: number }) => <span className="text-warn" aria-hidden>{"★".repeat(n)}{"☆".repeat(5 - n)}</span>;
@@ -24,16 +25,17 @@ export function SupplierReviewsList({ reviews }: { reviews: SupplierReviewRow[] 
   const router = useRouter();
   const [open, setOpen] = useState<string | null>(null);
   const [text, setText] = useState("");
+  const [flagging, setFlagging] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function reply(id: string) {
+  async function run(fn: () => Promise<unknown>, done: () => void) {
     setBusy(true);
     setError(null);
     try {
-      await api(`/supplier/reviews/${id}/reply`, { body: { text: text.trim() } });
-      setOpen(null);
-      setText("");
+      await fn();
+      done();
       router.refresh();
     } catch (e) {
       setError(e instanceof ApiError ? e.messageFor(locale) : t("common.error"));
@@ -41,6 +43,8 @@ export function SupplierReviewsList({ reviews }: { reviews: SupplierReviewRow[] 
       setBusy(false);
     }
   }
+  const reply = (id: string) => run(() => api(`/supplier/reviews/${id}/reply`, { body: { text: text.trim() } }), () => { setOpen(null); setText(""); });
+  const flag = (id: string) => run(() => api(`/supplier/reviews/${id}/flag`, { body: { reason: reason.trim() } }), () => { setFlagging(null); setReason(""); });
 
   if (reviews.length === 0) return <Card><p className="text-muted">{t("supplierReviews.empty")}</p></Card>;
 
@@ -72,6 +76,21 @@ export function SupplierReviewsList({ reviews }: { reviews: SupplierReviewRow[] 
           ) : (
             <button type="button" className={btnCls("ghost", "!min-h-9 !px-0 !py-1.5 text-sm")} onClick={() => setOpen(r.id)}>{t("supplierReviews.replySubmit")}</button>
           )}
+
+          <div className="mt-2">
+            {r.flag ? (
+              <Chip tone={r.flag.status === "OPEN" ? "warn" : "neutral"}>{t(`supplierReviews.flagStatus.${r.flag.status}`)}</Chip>
+            ) : flagging === r.id ? (
+              <div className="space-y-2">
+                <textarea className={`${inputCls} min-h-14 text-sm`} maxLength={300} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t("supplierReviews.flagPlaceholder")} />
+                <button type="button" className={btnCls("secondary", "!min-h-9 !py-1.5 text-sm")} disabled={busy || reason.trim().length < 5} onClick={() => flag(r.id)}>
+                  {busy ? t("common.loading") : t("supplierReviews.flagSubmit")}
+                </button>
+              </div>
+            ) : (
+              <button type="button" className={btnCls("ghost", "!min-h-9 !px-0 !py-1.5 text-sm")} onClick={() => setFlagging(r.id)}>{t("supplierReviews.flagButton")}</button>
+            )}
+          </div>
         </Card>
       ))}
     </div>

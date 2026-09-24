@@ -196,6 +196,11 @@ export const ERRORS = {
     ar: "رددت على هذا التقييم من قبل.",
     en: "You have already replied to this review.",
   },
+  ALREADY_FLAGGED: {
+    status: 409,
+    ar: "سبق الإبلاغ عن هذا التقييم.",
+    en: "This review has already been flagged.",
+  },
   INTERNAL: { status: 500, ar: "حدث خطأ غير متوقع.", en: "Something went wrong." },
 } as const;
 

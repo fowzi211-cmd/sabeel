@@ -21,6 +21,7 @@
     "verify:5": "tsx --env-file=.env scripts/verify-slice5.ts",
     "verify:6": "tsx --env-file=.env scripts/verify-slice6.ts",
     "verify:7": "tsx --env-file=.env scripts/verify-slice7.ts",
+    "verify:8": "tsx --env-file=.env scripts/verify-slice8.ts",
     "db:backup": "tsx --env-file=.env scripts/backup.ts",
     "db:restore": "tsx --env-file=.env scripts/restore.ts"
   },

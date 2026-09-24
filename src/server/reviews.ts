@@ -76,6 +76,42 @@ export async function replyToReview(user: User, supplier: Supplier, reviewId: st
   }
 }
 
+export const flagReviewSchema = z.object({ reason: z.string().trim().min(5).max(300) });
+export const dismissFlagSchema = z.object({ note: z.string().trim().min(2).max(300) });
+
+/** A supplier asks admin to look at a review it thinks breaks the rules — once per review, never hides it by itself. */
+export async function flagReview(user: User, supplier: Supplier, reviewId: string, input: z.infer<typeof flagReviewSchema>, meta: RequestMeta) {
+  checkRateLimit(`review.flag:${supplier.id}`, 20, 60 * 60_000);
+  const review = await db.review.findFirst({ where: { id: reviewId, supplierId: supplier.id }, include: { flag: true } });
+  if (!review) throw new AppError("NOT_FOUND");
+  if (review.removedAt) throw new AppError("INVALID_STATE");
+  if (review.flag) throw new AppError("ALREADY_FLAGGED");
+  try {
+    const flag = await db.reviewFlag.create({ data: { reviewId, supplierId: supplier.id, flaggedByUserId: user.id, reason: input.reason.trim() } });
+    await audit({ actor: { id: user.id, roles: user.roles }, action: "review.flagged", entity: "ReviewFlag", entityId: flag.id, note: input.reason, meta });
+    return flag;
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") throw new AppError("ALREADY_FLAGGED");
+    throw e;
+  }
+}
+
+/** Admin decides the flag is not grounds for removal: the review stays, the supplier is told why. */
+export async function dismissReviewFlag(admin: Actor, reviewId: string, input: z.infer<typeof dismissFlagSchema>, meta: RequestMeta, now: Date = new Date()) {
+  const flag = await db.reviewFlag.findUnique({ where: { reviewId }, include: { review: { select: { order: { select: { orderNo: true } } } } } });
+  if (!flag) throw new AppError("NOT_FOUND");
+  const changed = await db.reviewFlag.updateMany({ where: { id: flag.id, status: "OPEN" }, data: { status: "DISMISSED", resolvedById: admin.id, resolvedAt: now, resolutionNote: input.note.trim() } });
+  if (changed.count === 0) throw new AppError("INVALID_STATE");
+  await audit({ actor: admin, action: "review.flag_dismissed", entity: "ReviewFlag", entityId: flag.id, note: input.note, meta });
+  const no = flag.review.order.orderNo;
+  await notifySupplier(flag.supplierId, "review.flag_dismissed", {
+    ar: `سبيل: راجعت الإدارة بلاغك عن تقييم الطلب ${no} وأبقته منشوراً. ${input.note.trim()}`,
+    en: `Sabeel: we reviewed your report on the review for order ${no} and are keeping it published. ${input.note.trim()}`,
+  }, { reviewId, supplierId: flag.supplierId }, { sms: false });
+}
+
+export const openFlaggedReviewCount = () => db.reviewFlag.count({ where: { status: "OPEN" } });
+
 export const removeReviewSchema = z.object({ reason: z.string().trim().min(2).max(300) });
 
 /** Admin-only takedown (abuse, off-topic, policy violation) — the review row is kept, only hidden. */
@@ -83,17 +119,20 @@ export async function removeReview(admin: Actor, reviewId: string, input: z.infe
   const review = await db.review.findUnique({ where: { id: reviewId } });
   if (!review) throw new AppError("NOT_FOUND");
   if (review.removedAt) throw new AppError("INVALID_STATE");
-  await db.review.update({ where: { id: reviewId }, data: { removedById: admin.id, removedAt: now, removeReason: input.reason.trim() } });
+  await db.$transaction([
+    db.review.update({ where: { id: reviewId }, data: { removedById: admin.id, removedAt: now, removeReason: input.reason.trim() } }),
+    db.reviewFlag.updateMany({ where: { reviewId, status: "OPEN" }, data: { status: "UPHELD", resolvedById: admin.id, resolvedAt: now, resolutionNote: input.reason.trim() } }),
+  ]);
   await audit({ actor: admin, action: "review.removed", entity: "Review", entityId: reviewId, note: input.reason, meta });
 }
 
-export interface ReviewListFilter { q?: string }
+export interface ReviewListFilter { q?: string; flagged?: boolean }
 
 export async function listSupplierReviews(supplierId: string, opts: { cursor?: string; limit?: number } = {}) {
   const limit = opts.limit ?? DEFAULT_PAGE_SIZE;
   const rows = await db.review.findMany({
     where: { supplierId, removedAt: null },
-    include: { reply: true, order: { select: { orderNo: true } }, buyer: { select: { name: true } } },
+    include: { reply: true, flag: true, order: { select: { orderNo: true } }, buyer: { select: { name: true } } },
     orderBy: { createdAt: "desc" },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
@@ -104,8 +143,11 @@ export async function listSupplierReviews(supplierId: string, opts: { cursor?: s
 export async function listAdminReviews(filter: ReviewListFilter = {}, opts: { cursor?: string; limit?: number } = {}) {
   const limit = opts.limit ?? DEFAULT_PAGE_SIZE;
   const rows = await db.review.findMany({
-    where: filter.q ? { OR: [{ order: { orderNo: { contains: filter.q, mode: "insensitive" } } }, { supplier: { tradeName: { contains: filter.q, mode: "insensitive" } } }] } : {},
-    include: { reply: true, order: { select: { orderNo: true } }, supplier: { select: { tradeName: true, legalNameAr: true } }, buyer: { select: { name: true } } },
+    where: {
+      ...(filter.q ? { OR: [{ order: { orderNo: { contains: filter.q, mode: "insensitive" } } }, { supplier: { tradeName: { contains: filter.q, mode: "insensitive" } } }] } : {}),
+      ...(filter.flagged ? { flag: { status: "OPEN" as const } } : {}),
+    },
+    include: { reply: true, flag: true, order: { select: { orderNo: true } }, supplier: { select: { tradeName: true, legalNameAr: true } }, buyer: { select: { name: true } } },
     orderBy: { createdAt: "desc" },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),

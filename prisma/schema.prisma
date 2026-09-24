@@ -1061,6 +1061,7 @@ model Review {
   supplier Supplier     @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   buyer    User         @relation(fields: [buyerId], references: [id], onDelete: Restrict)
   reply    ReviewReply?
+  flag     ReviewFlag?
 
   @@index([supplierId, removedAt])
   @@index([buyerId])
@@ -1075,4 +1076,30 @@ model ReviewReply {
   createdAt      DateTime @default(now())
 
   review Review @relation(fields: [reviewId], references: [id], onDelete: Restrict)
+}
+
+enum ReviewFlagStatus {
+  OPEN
+  DISMISSED
+  UPHELD
+}
+
+/// A supplier asks admin to look at a review it thinks breaks the rules. Kept apart from Review itself,
+/// whose rows are write-once. UPHELD = the review was removed; DISMISSED = it stays.
+model ReviewFlag {
+  id              String           @id @default(cuid())
+  reviewId        String           @unique
+  supplierId      String
+  flaggedByUserId String
+  reason          String
+  status          ReviewFlagStatus @default(OPEN)
+  resolvedById    String?
+  resolvedAt      DateTime?
+  resolutionNote  String?
+  createdAt       DateTime         @default(now())
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt])
+  @@index([supplierId])
 }

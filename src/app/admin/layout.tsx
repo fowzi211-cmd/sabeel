@@ -16,6 +16,7 @@ export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
     { href: "/admin/terms", key: "terms", show: true },
     { href: "/admin/fees", key: "fees", show: hasRole(r, "ADMIN_OPS", "ADMIN_FINANCE") },
     { href: "/admin/fee-invoices", key: "feeInvoices", show: hasRole(r, "ADMIN_OPS", "ADMIN_FINANCE") },
+    { href: "/admin/payments", key: "payments", show: hasRole(r, "ADMIN_OPS", "ADMIN_FINANCE") },
     { href: "/admin/reviews", key: "reviews", show: hasRole(r, "ADMIN_OPS", "ADMIN_SUPPORT") },
     { href: "/admin/audit", key: "audit", show: hasRole(r, "ADMIN_OPS", "ADMIN_FINANCE") },
     { href: "/admin/users", key: "users", show: r.includes("SUPER_ADMIN") },

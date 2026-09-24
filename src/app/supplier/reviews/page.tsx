@@ -31,6 +31,7 @@ export default async function SupplierReviews({ searchParams }: PageProps<"/supp
           id: r.id, stars: r.stars, comment: r.comment, createdAt: r.createdAt.toISOString(),
           orderNo: r.order.orderNo, buyerFirstName: firstName(r.buyer.name),
           reply: r.reply ? { text: r.reply.text, createdAt: r.reply.createdAt.toISOString() } : null,
+          flag: r.flag ? { status: r.flag.status } : null,
         }))}
       />
       {nextCursor ? <Link href={`/supplier/reviews?cursor=${nextCursor}`} className={btnCls("secondary")}>{t("common.older")}</Link> : null}

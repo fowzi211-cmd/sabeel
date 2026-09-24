@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { requirePage } from "@/lib/guards";
 import { docsNeedingAttention } from "@/server/compliance";
 import { attentionWhere } from "@/server/orders";
+import { openFlaggedReviewCount } from "@/server/reviews";
 import { getCurrentTerms } from "@/server/terms";
 
 export const generateMetadata = pageMeta("admin.dashboardTitle");
@@ -15,7 +16,7 @@ export default async function AdminDashboard() {
   const { t, locale } = await getI18n();
   const now = new Date();
 
-  const [counts, queue, inbox, current, attentionOrders, openDisputes, blockedSuppliers, invoicesAwaiting, invoicesOverdue, docs] = await Promise.all([
+  const [counts, queue, inbox, current, attentionOrders, openDisputes, blockedSuppliers, invoicesAwaiting, invoicesOverdue, docs, flaggedReviews] = await Promise.all([
     db.supplier.groupBy({ by: ["status"], _count: true }),
     db.supplier.findMany({ where: { status: "PENDING" }, orderBy: { submittedAt: "asc" }, take: 10 }),
     db.notification.findMany({ where: { userId: user.id, channel: "IN_APP" }, orderBy: { createdAt: "desc" }, take: 8 }),
@@ -26,6 +27,7 @@ export default async function AdminDashboard() {
     db.feeInvoice.count({ where: { status: "PAYMENT_SUBMITTED" } }),
     db.feeInvoice.count({ where: { status: "OVERDUE" } }),
     docsNeedingAttention(now),
+    openFlaggedReviewCount(),
   ]);
 
   const unreviewed = current.filter((d) => d && !d.legalReviewedAt).map((d) => t(`admin.termsType.${d!.type}`));
@@ -39,6 +41,7 @@ export default async function AdminDashboard() {
     { key: "suppliersBlocked", href: "/admin/fees", count: blockedSuppliers },
     { key: "invoices", href: "/admin/fee-invoices", count: invoicesAwaiting + invoicesOverdue },
     { key: "docs", href: "/admin/suppliers", count: docs.length },
+    { key: "flaggedReviews", href: "/admin/reviews?flagged=1", count: flaggedReviews },
   ] as const;
   const totalNeedingAttention = tiles.reduce((s, x) => s + x.count, 0);
 
@@ -52,7 +55,7 @@ export default async function AdminDashboard() {
         {totalNeedingAttention === 0 ? (
           <Banner tone="ok">{t("admin.noQueue")}</Banner>
         ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
             {tiles.map((tile) => (
               <Link key={tile.key} href={tile.href} className={`rounded-xl border p-3 hover:border-aqua-500 ${tile.count > 0 ? "border-warn bg-warn-bg" : "border-line bg-white"}`}>
                 <div className="text-2xl font-bold">{tile.count}</div>

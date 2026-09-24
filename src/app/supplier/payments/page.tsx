@@ -7,7 +7,7 @@ import { pageMeta } from "@/i18n/meta";
 import { fmtWhen } from "@/lib/format";
 import { requirePage } from "@/lib/guards";
 import { feeHalalas, formatSar, supplierKeeps } from "@/lib/money";
-import { listSupplierPayments } from "@/server/payments";
+import { listSupplierPayments, supplierPaymentTotals } from "@/server/payments";
 import { getOwnedSupplier } from "@/server/suppliers";
 
 export const generateMetadata = pageMeta("payments.title");
@@ -20,12 +20,11 @@ export default async function SupplierPayments({ searchParams }: PageProps<"/sup
   if (!supplier) redirect("/supplier/apply");
   const cursor = one((await searchParams).cursor);
 
-  const { items: rows, nextCursor } = await listSupplierPayments(supplier.id, {}, { cursor });
+  const [{ items: rows, nextCursor }, totals] = await Promise.all([listSupplierPayments(supplier.id, {}, { cursor }), supplierPaymentTotals(supplier.id)]);
   const payments = rows.map((p) => {
     const fee = feeHalalas(p.order.packetEqMilliTotal, 1, p.order.feePerPacketHalalas);
     return { ...p, fee, keep: supplierKeeps(p.amountHalalas, fee).keep };
   });
-  const kept = payments.filter((p) => p.status === "RECEIVED").reduce((s, p) => s + p.keep, 0);
   const tone = (status: string) => (status === "RECEIVED" ? "ok" : status === "OVERDUE" || status === "DISPUTED" ? "bad" : "info");
 
   return (
@@ -35,7 +34,7 @@ export default async function SupplierPayments({ searchParams }: PageProps<"/sup
       {payments.length === 0 ? <Card><p className="text-muted">{t("payments.empty")}</p></Card> : null}
       {payments.length > 0 ? (
         <>
-          <p className="mb-3 text-sm text-muted">{t("payments.totalsLine", { n: payments.length, amount: formatSar(kept, locale) })}</p>
+          <p className="mb-3 text-sm text-muted">{t("payments.totalsLine", { n: totals.count, amount: formatSar(totals.received.keptHalalas, locale) })}</p>
           <Table>
             <thead>
               <tr>

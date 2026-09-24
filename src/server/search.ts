@@ -6,6 +6,7 @@ import { generateSlots } from "./delivery";
 import { suppliersWithExpiredDocs } from "./compliance";
 import { rankScores } from "./ranking";
 import { supplierRatingSummaries } from "./reviews";
+import { supplierOnTimeSummaries } from "./ontime";
 
 export const searchSchema = z.object({
   districtId: z.string().min(1),
@@ -82,7 +83,7 @@ export async function searchOffers(input: SearchInput, now: Date = new Date()): 
   // A supplier whose verified document has expired disappears from comparison automatically.
   const supplierIds = [...new Set(offers.map((o) => o.supplierId))];
   const expired = await suppliersWithExpiredDocs(supplierIds, now);
-  const ratings = await supplierRatingSummaries(supplierIds);
+  const [ratings, onTime] = await Promise.all([supplierRatingSummaries(supplierIds), supplierOnTimeSummaries(supplierIds, now)]);
 
   const rows = offers.flatMap((o) => {
     const zone = o.supplier.zones[0];
@@ -114,7 +115,7 @@ export async function searchOffers(input: SearchInput, now: Date = new Date()): 
       earliestSlot: slots[0].start.toISOString(),
       rating: rating.rating,
       reviewCount: rating.reviewCount,
-      onTimePct: null, // delivery on-time % is a later-slice metric (design pack R08); reviews only for now
+      onTimePct: onTime.get(o.supplierId)?.pct ?? null,
       score: 0,
     } satisfies OfferResult];
   });

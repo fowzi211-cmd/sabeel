@@ -2,7 +2,7 @@ import { z } from "zod";
 import { route } from "@/lib/http";
 import { ownedSupplier } from "@/server/fulfilment";
 import { feeHalalas, formatSar, supplierKeeps } from "@/lib/money";
-import { listSupplierPayments } from "@/server/payments";
+import { listSupplierPayments, supplierPaymentTotals } from "@/server/payments";
 
 const statuses = ["NOT_DUE", "DUE", "BUYER_MARKED_PAID", "RECEIVED", "OVERDUE", "DISPUTED", "VOID"] as const;
 
@@ -28,6 +28,7 @@ export const GET = route({ roles: ["SUPPLIER_ADMIN"] }, async ({ req, current })
       breakdown: { orderTotalHalalas: p.amountHalalas, feeHalalas: fee, feeVatHalalas: keep.feeVat, keepHalalas: keep.keep },
     };
   });
-  const totalKept = payments.filter((p) => p.status === "RECEIVED").reduce((s, p) => s + p.breakdown.keepHalalas, 0);
-  return { payments, nextCursor, totals: { count: payments.length, keptHalalas: totalKept, kept: formatSar(totalKept, "en") } };
+  // Totals cover every payment matching the filters, not just this page.
+  const totals = await supplierPaymentTotals(supplier.id, { status, brandId, from, to, q });
+  return { payments, nextCursor, totals: { ...totals, kept: formatSar(totals.received.keptHalalas, "en") } };
 });

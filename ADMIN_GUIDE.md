@@ -37,6 +37,7 @@ queue — each links straight to the page where you act on it:
 | Suppliers blocked | Paused or suspended — usually a ceiling or unpaid fee invoice | *Fees* |
 | Fee invoices | Awaiting your confirmation, or overdue | *Fee invoices* |
 | Expiring documents | A supplier's verified document is expiring or has expired | *Suppliers* (linked directly) |
+| Reported reviews | A supplier has reported a review and is waiting for your decision | *Reviews* → **Reported** filter |
 
 A tile reading **0** everywhere means the queue is genuinely empty — nothing to do. Below the
 tiles, the supplier-status counts and the detailed verification list work as before.
@@ -88,6 +89,18 @@ exposure table shows you who is close to it before it does.
 remove a review for abuse, off-topic content, or a real policy violation** — a real complaint about
 service, even a harsh one, should stay. Removal needs a reason and cannot be undone through the UI
 (the record is kept, just marked removed and hidden from buyers).
+
+**Reported reviews.** A supplier can report one review, once, with a reason. Reporting does *not* hide it. Open
+*Reviews* → **Reported** (or the dashboard tile) and decide: **Remove** it (the report is marked upheld) or
+**Keep it published** — you must write a short note, and the supplier is sent that note. Decide on the rules
+above, not on how harsh the review is.
+
+## Payments (*Payments*, Ops and Finance)
+
+Totals across **every** payment on the platform, then one line per supplier: how many payments, how much
+has been *received* (buyer paid and the supplier confirmed), Sabeel's fee including VAT on it, and what the
+supplier kept. These are real totals over all payments, not just the ones on the first page. Suppliers see the
+same numbers for their own payments on their Payments page.
 
 ## Agreements (Terms)
 

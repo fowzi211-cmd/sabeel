@@ -12,21 +12,28 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)?
 export default async function AdminReviewsPage({ searchParams }: PageProps<"/admin/reviews">) {
   await requirePage({ path: "/admin/reviews", roles: ["ADMIN_OPS", "ADMIN_SUPPORT"] });
   const { t } = await getI18n();
-  const cursor = one((await searchParams).cursor);
-  const { items: reviews, nextCursor } = await listAdminReviews({}, { cursor });
+  const sp = await searchParams;
+  const cursor = one(sp.cursor);
+  const flagged = one(sp.flagged) === "1";
+  const { items: reviews, nextCursor } = await listAdminReviews({ flagged }, { cursor });
 
   return (
     <div className="space-y-4">
       <PageHeading title={t("adminReviews.title")} sub={t("adminReviews.intro")} />
+      <div className="flex gap-2">
+        <Link href="/admin/reviews" className={btnCls(flagged ? "secondary" : "primary", "!min-h-9 !py-1.5 text-sm")}>{t("admin.filterAll")}</Link>
+        <Link href="/admin/reviews?flagged=1" className={btnCls(flagged ? "primary" : "secondary", "!min-h-9 !py-1.5 text-sm")}>{t("adminReviews.flaggedFilter")}</Link>
+      </div>
       <AdminReviewsList
         reviews={reviews.map((r) => ({
           id: r.id, stars: r.stars, comment: r.comment, createdAt: r.createdAt.toISOString(),
           orderNo: r.order.orderNo, supplierName: r.supplier.tradeName || r.supplier.legalNameAr,
           buyerName: r.buyer.name, removedAt: r.removedAt?.toISOString() ?? null,
           reply: r.reply ? { text: r.reply.text } : null,
+          flag: r.flag ? { status: r.flag.status, reason: r.flag.reason } : null,
         }))}
       />
-      {nextCursor ? <Link href={`/admin/reviews?cursor=${nextCursor}`} className={btnCls("secondary")}>{t("common.older")}</Link> : null}
+      {nextCursor ? <Link href={`/admin/reviews?${flagged ? "flagged=1&" : ""}cursor=${nextCursor}`} className={btnCls("secondary")}>{t("common.older")}</Link> : null}
     </div>
   );
 }

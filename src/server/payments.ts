@@ -9,7 +9,7 @@ import {
   PAYMENT_REMINDER_FOLLOWUP_DAYS, REVIEW_WINDOW_DAYS,
 } from "@/lib/fulfilment";
 import { generateSlots } from "./delivery";
-import { formatSar } from "@/lib/money";
+import { feeHalalas, formatSar, supplierKeeps } from "@/lib/money";
 import { amountOwedFor, dueAtFrom, isOnTime, isValidAdjustment } from "@/lib/payments";
 import { checkCeilingAndPause, createFeeAccrual } from "./fees";
 import { checkRateLimit } from "@/lib/rateLimit";
@@ -366,18 +366,22 @@ export async function markNotReceived(user: Actor, supplier: Supplier, orderId: 
 export interface PaymentListFilter { status?: PaymentStatus; brandId?: string; from?: Date; to?: Date; q?: string }
 
 /** The supplier's Payments page (design pack §"Supplier Payments page"). */
+function paymentWhere(supplierId: string | undefined, filter: PaymentListFilter): Prisma.PaymentRecordWhereInput {
+  return {
+    order: {
+      ...(supplierId ? { supplierId } : {}),
+      ...(filter.brandId ? { items: { some: { brandId: filter.brandId } } } : {}),
+    },
+    ...(filter.status ? { status: filter.status } : {}),
+    ...(filter.from || filter.to ? { createdAt: { gte: filter.from, lte: filter.to } } : {}),
+    ...(filter.q ? { OR: [{ transactionNo: { contains: filter.q, mode: "insensitive" } }, { order: { orderNo: { contains: filter.q, mode: "insensitive" } } }] } : {}),
+  };
+}
+
 export async function listSupplierPayments(supplierId: string, filter: PaymentListFilter = {}, opts: { cursor?: string; limit?: number } = {}) {
   const limit = opts.limit ?? DEFAULT_PAGE_SIZE;
   const rows = await db.paymentRecord.findMany({
-    where: {
-      order: {
-        supplierId,
-        ...(filter.brandId ? { items: { some: { brandId: filter.brandId } } } : {}),
-      },
-      ...(filter.status ? { status: filter.status } : {}),
-      ...(filter.from || filter.to ? { createdAt: { gte: filter.from, lte: filter.to } } : {}),
-      ...(filter.q ? { OR: [{ transactionNo: { contains: filter.q, mode: "insensitive" } }, { order: { orderNo: { contains: filter.q, mode: "insensitive" } } }] } : {}),
-    },
+    where: paymentWhere(supplierId, filter),
     include: { order: { select: { id: true, orderNo: true, totalHalalas: true, feePerPacketHalalas: true, packetEqMilliTotal: true, placedAt: true, items: { select: { brandNameAr: true, brandNameEn: true } } } } },
     orderBy: { createdAt: "desc" },
     take: limit + 1,
@@ -464,4 +468,68 @@ export async function closeReviewWindow(now: Date = new Date(), limit = 500) {
   if (stale.length === 0) return { closed: 0 };
   const changed = await db.order.updateMany({ where: { id: { in: stale.map((s) => s.id) }, status: "PAID" }, data: { status: "CLOSED", closedAt: now } });
   return { closed: changed.count };
+}
+
+// ───────────────────────── totals across every page ─────────────────────────
+
+export interface PaymentTotals {
+  count: number;
+  byStatus: Partial<Record<PaymentStatus, { count: number; halalas: number }>>;
+  /** Money actually received: what buyers paid, Sabeel's fee + VAT on it, and what the supplier kept. */
+  received: { count: number; halalas: number; feeHalalas: number; feeVatHalalas: number; keptHalalas: number };
+}
+
+const emptyTotals = (): PaymentTotals => ({ count: 0, byStatus: {}, received: { count: 0, halalas: 0, feeHalalas: 0, feeVatHalalas: 0, keptHalalas: 0 } });
+
+/**
+ * Totals cover EVERY matching payment, not just the visible page. One lean query (a status, an amount and the
+ * order's fee inputs per row) reduced with the same fee/keep functions the rows use, so a total can never drift
+ * from what the individual lines add up to. supplierId omitted = all suppliers.
+ */
+function paymentRowsForTotals(supplierId: string | undefined, filter: PaymentListFilter) {
+  return db.paymentRecord.findMany({
+    where: paymentWhere(supplierId, filter),
+    select: { status: true, amountHalalas: true, order: { select: { supplierId: true, packetEqMilliTotal: true, feePerPacketHalalas: true } } },
+  });
+}
+
+type TotalsRow = Awaited<ReturnType<typeof paymentRowsForTotals>>[number];
+
+function addRow(t: PaymentTotals, r: TotalsRow) {
+  t.count++;
+  const s = (t.byStatus[r.status] ??= { count: 0, halalas: 0 });
+  s.count++;
+  s.halalas += r.amountHalalas;
+  if (r.status === "RECEIVED") {
+    const k = supplierKeeps(r.amountHalalas, feeHalalas(r.order.packetEqMilliTotal, 1, r.order.feePerPacketHalalas));
+    t.received.count++;
+    t.received.halalas += r.amountHalalas;
+    t.received.feeHalalas += k.fee;
+    t.received.feeVatHalalas += k.feeVat;
+    t.received.keptHalalas += k.keep;
+  }
+}
+
+export async function supplierPaymentTotals(supplierId: string, filter: PaymentListFilter = {}): Promise<PaymentTotals> {
+  const t = emptyTotals();
+  for (const r of await paymentRowsForTotals(supplierId, filter)) addRow(t, r);
+  return t;
+}
+
+/** Platform-wide totals plus one line per supplier, from a single pass over the same rows. */
+export async function allPaymentTotals(filter: PaymentListFilter = {}) {
+  const overall = emptyTotals();
+  const per = new Map<string, PaymentTotals>();
+  for (const r of await paymentRowsForTotals(undefined, filter)) {
+    addRow(overall, r);
+    let t = per.get(r.order.supplierId);
+    if (!t) per.set(r.order.supplierId, (t = emptyTotals()));
+    addRow(t, r);
+  }
+  const suppliers = await db.supplier.findMany({ where: { id: { in: [...per.keys()] } }, select: { id: true, tradeName: true, legalNameAr: true, legalNameEn: true } });
+  const byId = new Map(suppliers.map((s) => [s.id, s]));
+  const rows = [...per]
+    .map(([supplierId, totals]) => ({ supplierId, supplier: byId.get(supplierId) ?? null, totals }))
+    .sort((a, b) => b.totals.received.keptHalalas - a.totals.received.keptHalalas);
+  return { overall, suppliers: rows };
 }

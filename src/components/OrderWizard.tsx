@@ -30,7 +30,7 @@ interface Offer {
   brand: { id: string; nameAr: string; nameEn: string };
   bottleMl: number; bottlesPerPack: number; stock: "IN_STOCK" | "LIMITED"; qtyPacks: number;
   unitPriceHalalas: number; goodsHalalas: number; deliveryHalalas: number; totalHalalas: number; vatHalalas: number;
-  leadTimeHours: number; earliestSlot: string; rating: number | null; reviewCount: number;
+  leadTimeHours: number; earliestSlot: string; rating: number | null; reviewCount: number; onTimePct: number | null;
 }
 interface Slot { start: string; end: string }
 
@@ -407,6 +407,7 @@ export function OrderWizard({ type, hasName, termsAccepted, capHalalas }: Props)
                       ) : (
                         <Chip tone="neutral">☆ {t("order.isNew")}</Chip>
                       )}
+                      {o.onTimePct !== null ? <Chip tone="neutral">⏱ {t("order.onTime", { pct: o.onTimePct })}</Chip> : null}
                       {o.stock === "LIMITED" ? <Chip tone="warn">{t("order.limited")}</Chip> : null}
                     </div>
                   </div>
