@@ -398,7 +398,7 @@ export function OrderWizard({ type, hasName, termsAccepted, capHalalas }: Props)
               <Card key={o.offerId} className={i === 0 && sort === "best" ? "!border-aqua-600 ring-2 ring-aqua-100" : ""}>
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
-                    <div className="text-lg font-bold">{dName(o.supplier)}</div>
+                    <div className="text-lg font-bold"><Link href={`/suppliers/${o.supplier.id}`} className="hover:underline" title={t("profile.viewProfile")}>{dName(o.supplier)}</Link></div>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                       <Chip tone="ok">✔ {t("order.verified")}</Chip>
                       {o.supplier.independent ? <Chip tone="neutral">🚚 {t("order.independent")}</Chip> : null}

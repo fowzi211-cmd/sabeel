@@ -17,23 +17,32 @@ export function averageStars(stars: number[]): number | null {
   return Math.round((stars.reduce((a, b) => a + b, 0) / stars.length) * 10) / 10;
 }
 
-/** A recent review should move a supplier's rating more than an old one (design pack §H "ranking" gap). */
-export const RATING_HALF_LIFE_DAYS = 90;
+/** Design pack R07: w = 0.5^(age_days ÷ 180) — a review from 180 days ago counts half as much as today's. */
+export const RATING_HALF_LIFE_DAYS = 180;
+/** R07's prior: the platform average counts as this many extra reviews, so one 5★ can't top the list. */
+export const RATING_PRIOR_REVIEWS = 3;
 
 /**
- * Exponential-decay weighted average: a review from `RATING_HALF_LIFE_DAYS` ago counts half as much
- * as one from today, one from twice that ago a quarter as much, and so on — never zero, so a
- * long-inactive supplier's old reviews still count, just less than fresh ones.
+ * Exponential-decay weighted average of 1–5 scores, optionally pulled toward `priorMean` by
+ * RATING_PRIOR_REVIEWS: (Σ w·r + 3·mean) ÷ (Σ w + 3). Weights never reach zero, so a long-inactive
+ * supplier's old reviews still count, just less than fresh ones. null with no scores.
  */
-export function weightedAverageStars(reviews: { stars: number; createdAt: Date }[], now: Date = new Date()): number | null {
-  if (reviews.length === 0) return null;
+export function weightedAverage(scores: { value: number; createdAt: Date }[], now: Date = new Date(), priorMean?: number): number | null {
+  if (scores.length === 0) return null;
   let weightSum = 0;
-  let starsSum = 0;
-  for (const r of reviews) {
-    const daysAgo = Math.max(0, (now.getTime() - r.createdAt.getTime()) / DAY);
+  let sum = 0;
+  for (const s of scores) {
+    const daysAgo = Math.max(0, (now.getTime() - s.createdAt.getTime()) / DAY);
     const weight = Math.pow(0.5, daysAgo / RATING_HALF_LIFE_DAYS);
     weightSum += weight;
-    starsSum += weight * r.stars;
+    sum += weight * s.value;
   }
-  return Math.round((starsSum / weightSum) * 10) / 10;
+  if (priorMean !== undefined) {
+    weightSum += RATING_PRIOR_REVIEWS;
+    sum += RATING_PRIOR_REVIEWS * priorMean;
+  }
+  return Math.round((sum / weightSum) * 10) / 10;
 }
+
+export const weightedAverageStars = (reviews: { stars: number; createdAt: Date }[], now: Date = new Date(), priorMean?: number): number | null =>
+  weightedAverage(reviews.map((r) => ({ value: r.stars, createdAt: r.createdAt })), now, priorMean);

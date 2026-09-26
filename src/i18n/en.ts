@@ -1028,6 +1028,17 @@ export const en: Dict = {
     closedBanner: "The window to review this order has closed.",
     removedBanner: "This review was removed by Sabeel.",
   },
+  profile: {
+    title: "Supplier",
+    since: "On Sabeel since {date}",
+    stat: { onTime: "Delivered on time", acceptance: "Accepts orders", dispute: "Orders with a problem" },
+    basedOn: "last 90 days · {n} cases",
+    notEnough: "Not enough activity yet",
+    categories: "What donors rated",
+    reviews: "Reviews",
+    anonymous: "Anonymous donor",
+    viewProfile: "Supplier profile",
+  },
   supplierReviews: {
     title: "Reviews",
     intro: "What donors said about their orders. You may reply once to each.",

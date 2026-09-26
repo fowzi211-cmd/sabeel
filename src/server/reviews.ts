@@ -3,7 +3,8 @@ import { Prisma, type Role, type Supplier, type User } from "@prisma/client";
 import { db } from "@/lib/db";
 import { audit, type RequestMeta } from "@/lib/audit";
 import { AppError } from "@/lib/errors";
-import { canStillReview, isRatedSupplier, weightedAverageStars } from "@/lib/reviews";
+import { canStillReview, isRatedSupplier, weightedAverage, weightedAverageStars } from "@/lib/reviews";
+import { PRIOR_RATING } from "./ranking";
 import { REVIEW_CATEGORIES, REVIEW_REMINDER_HOURS } from "@/lib/fulfilment";
 import { checkRateLimit } from "@/lib/rateLimit";
 import { DEFAULT_PAGE_SIZE, paginate } from "@/lib/pagination";
@@ -155,16 +156,33 @@ export async function listAdminReviews(filter: ReviewListFilter = {}, opts: { cu
   return paginate(rows, limit);
 }
 
+/** Every published review's mean stars: R07's prior. Falls back to the ranking's neutral prior on an empty platform. */
+export async function platformAverageStars(): Promise<number> {
+  const a = await db.review.aggregate({ where: { removedAt: null }, _avg: { stars: true } });
+  return a._avg.stars ?? PRIOR_RATING;
+}
+
+/** Weighted average per rating category (R07: same weights, no prior). null where nobody scored that category. */
+export async function supplierCategoryAverages(supplierId: string, now: Date = new Date()): Promise<Record<(typeof REVIEW_CATEGORIES)[number], number | null>> {
+  const rows = await db.review.findMany({ where: { supplierId, removedAt: null }, select: { createdAt: true, timeliness: true, asOrdered: true, packaging: true, driverConduct: true, value: true } });
+  const out = {} as Record<(typeof REVIEW_CATEGORIES)[number], number | null>;
+  for (const c of REVIEW_CATEGORIES) {
+    out[c] = weightedAverage(rows.flatMap((r) => (r[c] == null ? [] : [{ value: r[c] as number, createdAt: r.createdAt }])), now);
+  }
+  return out;
+}
+
 /** Feeds the offer comparison list (search.ts): "New" until REVIEWS_UNTIL_RATED reviews are in. */
 export async function supplierRatingSummary(supplierId: string, now: Date = new Date()): Promise<{ rating: number | null; reviewCount: number }> {
   const rows = await db.review.findMany({ where: { supplierId, removedAt: null }, select: { stars: true, createdAt: true } });
   if (!isRatedSupplier(rows.length)) return { rating: null, reviewCount: rows.length };
-  return { rating: weightedAverageStars(rows, now), reviewCount: rows.length };
+  return { rating: weightedAverageStars(rows, now, await platformAverageStars()), reviewCount: rows.length };
 }
 
 /** Batched version of supplierRatingSummary for the offer list, one query for every supplier shown. */
 export async function supplierRatingSummaries(supplierIds: string[], now: Date = new Date()): Promise<Map<string, { rating: number | null; reviewCount: number }>> {
   if (supplierIds.length === 0) return new Map();
+  const prior = await platformAverageStars();
   const rows = await db.review.findMany({ where: { supplierId: { in: supplierIds }, removedAt: null }, select: { supplierId: true, stars: true, createdAt: true } });
   const bySupplier = new Map<string, { stars: number; createdAt: Date }[]>();
   for (const r of rows) {
@@ -174,7 +192,7 @@ export async function supplierRatingSummaries(supplierIds: string[], now: Date =
   }
   const map = new Map<string, { rating: number | null; reviewCount: number }>();
   for (const [supplierId, list] of bySupplier) {
-    map.set(supplierId, isRatedSupplier(list.length) ? { rating: weightedAverageStars(list, now), reviewCount: list.length } : { rating: null, reviewCount: list.length });
+    map.set(supplierId, isRatedSupplier(list.length) ? { rating: weightedAverageStars(list, now, prior), reviewCount: list.length } : { rating: null, reviewCount: list.length });
   }
   return map;
 }

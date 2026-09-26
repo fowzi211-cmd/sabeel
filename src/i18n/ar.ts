@@ -1025,6 +1025,17 @@ export const ar = {
     closedBanner: "انتهت مهلة تقييم هذا الطلب.",
     removedBanner: "أزالت سبيل هذا التقييم.",
   },
+  profile: {
+    title: "المورّد",
+    since: "على سبيل منذ {date}",
+    stat: { onTime: "التسليم في الموعد", acceptance: "قبول الطلبات", dispute: "طلبات فيها مشكلة" },
+    basedOn: "آخر ٩٠ يوماً · {n} حالة",
+    notEnough: "لا يوجد نشاط كافٍ بعد",
+    categories: "ما قيّمه المتبرعون",
+    reviews: "التقييمات",
+    anonymous: "متبرع مجهول",
+    viewProfile: "صفحة المورّد",
+  },
   supplierReviews: {
     title: "التقييمات",
     intro: "ما قاله المتبرعون عن طلباتهم. يمكنك الردّ مرة واحدة على كل تقييم.",

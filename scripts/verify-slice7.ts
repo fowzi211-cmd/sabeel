@@ -167,13 +167,13 @@ async function main() {
   await dummyReview(R.id, buyer.userId, az.id, 1, new Date());
   const summaryR = await supplierRatingSummary(R.id);
   check(
-    "A fresh 1★ pulls the rating far below the 3.7 a simple average of (5,5,1) would give",
-    summaryR.rating !== null && summaryR.rating < 2,
+    "A fresh 1★ pulls the rating well below the 3.7 a simple average of (5,5,1) would give (R07: old reviews decay, prior of 3)",
+    summaryR.rating !== null && summaryR.rating < 3.6,
     summaryR,
   );
   const searchRes = must(await buyer.c.post("/api/v1/offers/search", { districtId: az.id, qtyPacks: 1 }), "offers search");
   const offerRow = (searchRes.json.offers as { supplier: { id: string }; rating: number | null }[]).find((o) => o.supplier.id === R.id);
-  check("The same recency-weighted rating reaches the real search API buyers see", !!offerRow && offerRow.rating !== null && offerRow.rating < 2, offerRow);
+  check("The same recency-weighted rating reaches the real search API buyers see", !!offerRow && offerRow.rating !== null && offerRow.rating < 3.6, offerRow);
   void zoneR; void offerR;
 
   // ───── D. Ceiling-warning dedup: genuine crossings, not calendar days ─────

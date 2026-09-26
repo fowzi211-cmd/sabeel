@@ -53,10 +53,22 @@ describe("weightedAverageStars", () => {
   });
 
   it("a review from exactly one half-life ago counts about half as much as today's", () => {
-    const halfLifeAgo = new Date(now.getTime() - 90 * 86_400_000);
+    const halfLifeAgo = new Date(now.getTime() - 180 * 86_400_000); // R07: w = 0.5^(age ÷ 180)
     const reviews = [{ stars: 5, createdAt: now }, { stars: 1, createdAt: halfLifeAgo }];
-    // weight(today)=1, weight(90d ago)=0.5 → (1*5 + 0.5*1) / 1.5 = 3.667 → 3.7
+    // weight(today)=1, weight(180d ago)=0.5 → (1*5 + 0.5*1) / 1.5 = 3.667 → 3.7
     expect(weightedAverageStars(reviews, now)).toBe(3.7);
+  });
+
+  it("R07 prior: the platform average counts as 3 extra reviews, pulling a thin record toward it", () => {
+    const three = [{ stars: 5, createdAt: now }, { stars: 5, createdAt: now }, { stars: 5, createdAt: now }];
+    // (15 + 3*4.0) / (3 + 3) = 4.5 — three perfect reviews don't beat the platform by the full margin
+    expect(weightedAverageStars(three, now, 4)).toBe(4.5);
+  });
+
+  it("the prior matters less as reviews accumulate", () => {
+    const many = Array.from({ length: 27 }, () => ({ stars: 5, createdAt: now }));
+    // (135 + 12) / 30 = 4.9
+    expect(weightedAverageStars(many, now, 4)).toBe(4.9);
   });
 
   it("never fully discounts an old review — weight approaches but never reaches zero", () => {
