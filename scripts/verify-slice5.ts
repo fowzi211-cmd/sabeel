@@ -231,7 +231,8 @@ async function main() {
   section("E. Invoice generation (system only, per closed period)");
   // Y's whole batch of accruals above was already backdated into the same closed week (section D).
   const genStats = await generateInvoices();
-  check("An invoice was generated for the closed period", genStats.invoiced >= 1, genStats);
+  // The dev server's own 60 s job loop may have billed this period a moment before this call.
+  check("An invoice was generated for the closed period", genStats.invoiced >= 1 || (await db.feeInvoice.count({ where: { supplierId: Y.id } })) >= 1, genStats);
   const invY = await db.feeInvoice.findFirst({ where: { supplierId: Y.id }, orderBy: { issuedAt: "desc" } });
   check("Invoice number looks right, status ISSUED, due 7 days out", !!invY && /^SBL-INV-\d{4}-\d{6}$/.test(invY.invoiceNo) && invY.status === "ISSUED" && Math.abs(invY.dueAt.getTime() - (Date.now() + 7 * DAY)) < 5 * 60_000);
   check("Every accrual from that period is now linked to the invoice", (await db.feeAccrual.count({ where: { supplierId: Y.id, invoiceId: invY!.id } })) === 5);
@@ -398,7 +399,15 @@ async function main() {
   }
   const searchAfter = await shopper.c.post("/api/v1/offers/search", { districtId: az.id, qtyPacks: 1 });
   const vOfferAfter = searchAfter.json.offers.find((o: { supplier: { id: string } }) => o.supplier.id === V.id);
-  check("At REVIEWS_UNTIL_RATED (3) reviews, a real average rating and count appear", vOfferAfter?.rating === 4.7 && vOfferAfter?.reviewCount === 3, vOfferAfter);
+  // R07: (Σw·r + 3·platform mean) ÷ (Σw + 3), w ≈ 1 for three fresh reviews. The platform mean moves with
+  // whatever else is in the dev DB, so compute it now instead of hard-coding a number.
+  const platformMean = (await db.review.aggregate({ where: { removedAt: null }, _avg: { stars: true } }))._avg.stars ?? 4;
+  const expectedRating = (14 + 3 * platformMean) / 6;
+  check(
+    "At REVIEWS_UNTIL_RATED (3) reviews, a real rating (pulled toward the platform mean by R07's prior) and count appear",
+    vOfferAfter?.reviewCount === 3 && typeof vOfferAfter?.rating === "number" && Math.abs(vOfferAfter.rating - expectedRating) <= 0.15,
+    { got: vOfferAfter?.rating, expectedRating, platformMean },
+  );
 
   // ───── N. Audit trail ─────
   section("N. Audit trail");

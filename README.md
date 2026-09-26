@@ -5,7 +5,7 @@ running application. The product decisions live next door in
 [`../water-charity-platform`](../water-charity-platform) — read `PLATFORM_PROMPT_LEAN.md` (what
 we are building) and `design/DESIGN_PACK.md` (screens, data model, state machines) first.
 
-**Status: all 6 slices, plus hardening and slice 8, are built and verified.** Slice 1 = accounts, supplier and
+**Status: all 6 slices, plus hardening and slices 8–9, are built and verified.** Slice 1 = accounts, supplier and
 independent-distributor onboarding, admin approval, Brand Registry, online agreement acceptance.
 Slice 2 = supplier catalogue and prices, Makkah districts and delivery rules, offer comparison,
 and ordering (place / cancel) with a read-only supplier inbox and admin district/order screens.
@@ -67,7 +67,7 @@ when `NODE_ENV != production`; in production the console provider is refused (se
 |---|---|
 | `npm run dev` / `build` / `start` | Development server / production build / production server (port 3020) |
 | `npm run typecheck` · `npm run lint` | TypeScript and ESLint |
-| `npm test` | 111 unit tests (validators, encryption, agreement fingerprint, money/VAT/fee maths, delivery slots, ranking, trust caps, proof rules, payment/on-time rules, fee-invoice/ceiling maths, review rules) |
+| `npm test` | 123 unit tests (validators, encryption, agreement fingerprint, money/VAT/fee maths, delivery slots, ranking, trust caps, proof rules, payment/on-time rules, fee-invoice/ceiling maths, review rules) |
 | `npm run verify` | **120 end-to-end checks** for slice 1 against a running dev server and the dev DB (see below) |
 | `npm run verify:2` | **124 end-to-end checks** for slice 2: catalogue, zones, slot rules, comparison, order placement/idempotency/spending cap, cancel, privacy shaping, admin screens |
 | `npm run verify:3` | **160 end-to-end checks** for slice 3: accept/decline/re-route/escalate, expiry job, drivers, trip, recipient code, proof rules, immutability, failed delivery and reschedule, privacy (needs `npm run db:seed` first) |
@@ -76,6 +76,7 @@ when `NODE_ENV != production`; in production the console provider is refused (se
 | `npm run verify:6` | **22 end-to-end checks** for slice 6: the health endpoint, the generic rate limiter tripping on the write endpoints it protects, document-expiry notices, agreement re-acceptance nudges, the 30-day driver-location purge (and that it never touches proof evidence), the unified admin dashboard, access control (needs `npm run db:seed` first) |
 | `npm run verify:7` | **23 end-to-end checks** for slice 7 hardening: cursor pagination on orders/payments/fee-invoices/reviews (including a supplier's multi-status tab query and exact `groupBy` counts), recency-weighted ratings reaching the real search API, and ceiling-warning dedup by genuine threshold-crossing — including the recovery-then-re-rise case a calendar-day dedup would miss (needs `npm run db:seed` first) |
 | `npm run verify:8` | **37 end-to-end checks** for slice 8: on-time delivery % (15-min tolerance, 90-day window, minimum sample, reaching the real search API and the ranking), payment totals that cover every page and follow the filters, the platform-wide and per-supplier totals agreeing with each other, and the review-flag flow (report → admin queue → dismiss or remove, notifications, access control) (needs `npm run db:seed` first) |
+| `npm run verify:9` | **20 end-to-end checks** for slice 9: acceptance rate and dispute rate (window, minimum sample, what does and doesn't count), the R07 rating maths (180-day decay, prior of 3), category averages, the supplier profile page and API (first names only, anonymous respected, removed reviews hidden, paused suppliers not found, sign-in required) (needs `npm run db:seed` first; run the dev server with `JOBS_ENABLED=false` so its own job loop can't race the fixtures) |
 | `npm run jobs:run` | One manual pass of the background jobs (the server also runs them every minute) |
 | `npm run db:migrate` · `db:generate` · `db:seed` · `db:seed:demo` | Database tasks |
 | `npm run db:backup` · `db:restore -- <file>` | `scripts/backup.ts` / `scripts/restore.ts` — see `DEPLOY.md` §8 |
@@ -304,13 +305,12 @@ src/i18n/               Arabic + English dictionaries (English must provide ever
 13. **Reviews are write-once with no self-service edit, and no `FROZEN` cooling-off state** — the design pack's
    short review state machine (`PROMPTED → SUBMITTED → FROZEN(48h) → REMOVED`) is simplified here to
    `SUBMITTED → REMOVED`; an admin can remove a review immediately, there is no 48 h window before that becomes
-   possible. There is also no public supplier-profile page listing a supplier's reviews — only the aggregate
-   rating in offer comparison and the supplier/admin moderation views. **Partly closed in slice 8**: a supplier
+   possible. ~~There is also no public supplier-profile page~~ **Closed in slice 9**: `/suppliers/[id]` (signed-in users). **Partly closed in slice 8**: a supplier
    can now report one review (once, with a reason) and an admin either removes it or keeps it published with a
    note the supplier sees; open reports are a dashboard tile and a `/admin/reviews?flagged=1` filter.
 14. ~~**Ranking still uses a simple average rating**, not the "recent reviews weigh more" decay a mature
-   marketplace would want~~ **Closed in slice 7**: `weightedAverageStars()` (`src/lib/reviews.ts`) applies an
-   exponential decay with a 90-day half-life, used everywhere a supplier's rating is shown or ranked on
+   marketplace would want~~ **Closed in slice 7, aligned with the design pack in slice 9** (R07): `weightedAverageStars()` (`src/lib/reviews.ts`) applies an
+   exponential decay with a 180-day half-life plus a prior of 3 reviews toward the platform mean (slice 7 had used 90 days and no prior), used everywhere a supplier's rating is shown or ranked on
    (offer search, supplier/admin dashboards). On-time delivery % (R08) is still a later-slice input,
    defaulted to a neutral prior until it is built.
 15. ~~**Ceiling-warning notifications are deduped by calendar day**, not by genuine threshold-crossing~~
@@ -338,7 +338,7 @@ src/i18n/               Arabic + English dictionaries (English must provide ever
    design pack's full `GET /admin/queues/{type}` set verbatim. ~~Reviews have no "needs moderation" flag~~
    **Closed in slice 8**: supplier reports (`ReviewFlag`) are now the moderation signal, so "reported reviews"
    is a tile. A buyer-side report or an automatic ≤2-star flag is still not built.
-21. **Acceptance rate and dispute rate (R08's other two figures) are not computed or shown yet** — only on-time
+21. ~~**Acceptance rate and dispute rate (R08's other two figures) are not computed or shown yet**~~ **Closed in slice 9** (shown on the supplier profile page, not on the offer cards). Like on-time
    % is (slice 8). On-time % counts a delivery as on time if it lands within the promised window +15 minutes,
    over the last 90 days, and shows nothing (ranks on the neutral prior) until a supplier has 5 such deliveries.
 22. **Payment totals re-read every matching payment on each page load** (three integers per row, no joins beyond
@@ -358,13 +358,18 @@ src/i18n/               Arabic + English dictionaries (English must provide ever
   Admin: dashboard tile → `/admin/reviews?flagged=1` → *Remove* (flag becomes UPHELD) or *Keep it published* (DISMISSED,
   note sent to the supplier). One report per review.
 
+## Slice 9 — supplier profile, acceptance and dispute rates
+
+- **Supplier profile** (design pack S05): `/suppliers/[id]`, `GET /api/v1/suppliers/[id]` and `/reviews` — rating and review count, category averages, on-time %, acceptance %, dispute %, member-since, published reviews with the buyer's first name only (nothing for an anonymous order), the supplier's reply. Signed-in users only; only ACTIVE suppliers have a profile. Offer cards link to it.
+- **Acceptance rate** = accepted ÷ (accepted + declined + expired) offers in the last 90 days (open and withdrawn offers don't count). **Dispute rate** = delivered orders with a delivery dispute ÷ delivered orders, last 90 days — dismissed disputes and non-payment disputes don't count against the supplier. Both show "not enough activity yet" under 5 cases (`src/lib/rates.ts`, `src/server/supplierStats.ts`).
+- **R07 alignment**: rating decay half-life 180 days (was 90) and a prior of 3 reviews toward the platform mean (was none).
+
 ## Roadmap
 
 All 6 slices in the original plan are built and verified, plus two ad-hoc passes: **slice 7 hardening**
 (pagination, recency-weighted ratings, ceiling-warning dedup — gaps #10, #14, #15) and **slice 8**
-(on-time %, real payment totals, review reports — see the Slice 8 section). Deliberately still open:
-PDF certificate generation (#4), a public supplier-profile page and buyer-side review reports (#13, #20),
-acceptance/dispute rates (#21), a recipient-PII purge job (#17 — blocked on a lawyer-defined retention
+(on-time %, real payment totals, review reports — see the Slice 8 section) and **slice 9** (supplier profile, acceptance/dispute rates, R07 alignment). Deliberately still open:
+PDF certificate generation (#4), buyer-side review reports (#13, #20), a recipient-PII purge job (#17 — blocked on a lawyer-defined retention
 period, not something to invent), and moving the rate limiter to a shared store (#18 — a disclosed,
 reasonable tradeoff at the pilot's one-instance scale). What remains beyond that is exactly what's listed
 above under "known gaps" — mostly owner/legal/ops actions (a real SMS provider, legal review, real
