@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { Banner, Card, Chip, PageHeading } from "@/components/ui";
 import { ProofPanel } from "@/components/ProofPanel";
+import { SupplierDisputeResponse } from "@/components/SupplierDisputeResponse";
 import { SupplierOrderActions } from "@/components/SupplierOrderActions";
 import { SupplierPaymentActions } from "@/components/SupplierPaymentActions";
 import { SupplierSubnav } from "@/components/SupplierSubnav";
@@ -113,6 +114,9 @@ export default async function SupplierOrderDetail({ params }: PageProps<"/suppli
       {o.payment ? <SupplierPaymentActions orderId={o.id} payment={o.payment} hasOpenDispute={!!openDispute} /> : null}
 
       {openDispute ? <Banner tone="warn">{t(openDispute.openedBy === "SUPPLIER" ? "dispute.openBannerSupplierOwn" : "dispute.openBannerSupplier")}</Banner> : null}
+      {openDispute && openDispute.openedBy === "BUYER" && openDispute.responseDueAt && !openDispute.supplierRespondedAt && new Date() <= new Date(openDispute.responseDueAt) ? (
+        <SupplierDisputeResponse orderId={o.id} dueAt={new Date(openDispute.responseDueAt).toISOString()} />
+      ) : null}
       {o.disputes.length > 0 ? (
         <Card>
           <h2 className="mb-2 font-bold">{t("dispute.history")}</h2>
@@ -124,6 +128,11 @@ export default async function SupplierOrderDetail({ params }: PageProps<"/suppli
                   <span className="text-muted">{fmtWhen(d.createdAt, locale)}</span>
                 </div>
                 {d.outcome ? <p className="mt-1 text-muted">{t(`dispute.outcome.${d.outcome}`)}{d.resolutionNote ? ` — ${d.resolutionNote}` : ""}</p> : null}
+                {d.supplierResponse ? (
+                  <p className="mt-1"><span className="font-medium">{t("dispute.respond.supplierSays")}:</span> {d.supplierResponse}{d.hasEvidence ? <> · <a className="underline" href={`/api/v1/disputes/${d.id}/evidence`} target="_blank" rel="noreferrer">{t("dispute.respond.viewPhoto")}</a></> : null}</p>
+                ) : d.status === "OPEN" && d.responseDueAt ? (
+                  <p className="mt-1 text-muted">{new Date() > new Date(d.responseDueAt) ? t("dispute.respond.missed") : t("dispute.respond.awaiting", { due: fmtWhen(d.responseDueAt, locale) })}</p>
+                ) : null}
               </li>
             ))}
           </ul>

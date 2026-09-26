@@ -77,6 +77,13 @@ export default async function OrderDetail({ params }: PageProps<"/orders/[id]">)
         </Card>
       ) : null}
 
+      {o.disputes.filter((d) => d.supplierResponse).map((d) => (
+        <Card key={d.id}>
+          <h2 className="mb-1 font-bold">{t("dispute.respond.supplierSays")}</h2>
+          <p className="text-sm">{d.supplierResponse}</p>
+          {d.hasEvidence ? <p className="mt-1 text-sm"><a className="underline" href={`/api/v1/disputes/${d.id}/evidence`} target="_blank" rel="noreferrer">{t("dispute.respond.viewPhoto")}</a></p> : null}
+        </Card>
+      ))}
       {o.confirmable ? <BuyerConfirmDelivery orderId={o.id} /> : null}
       {o.disputes.some((d) => d.status === "OPEN" && d.category !== "NON_PAYMENT") ? <Banner tone="warn">{t("dispute.openBannerBuyer")}</Banner> : null}
       {o.payment ? <BuyerPaymentCard orderId={o.id} payment={o.payment} /> : null}

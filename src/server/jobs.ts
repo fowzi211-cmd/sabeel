@@ -1,5 +1,5 @@
 import { expireOverdueOrders, retryEscalatedOrders } from "./fulfilment";
-import { closeReviewWindow, sendConfirmReminders, sendPaymentReminders } from "./payments";
+import { closeReviewWindow, sendConfirmReminders, sendDisputeResponseReminders, sendPaymentReminders } from "./payments";
 import { escalateOverdueInvoices, generateInvoices, sendInvoiceReminders } from "./fees";
 import { sendReviewPromptReminders } from "./reviews";
 import { sendDocumentExpiryNotices } from "./compliance";
@@ -24,6 +24,7 @@ export async function runJobsOnce(now: Date = new Date()) {
   const retry = await retryEscalatedOrders(now);
   const confirmReminders = await sendConfirmReminders(now);
   const paymentReminders = await sendPaymentReminders(now);
+  const disputeReminders = await sendDisputeResponseReminders(now);
   const closed = await closeReviewWindow(now);
   const invoicesGenerated = await generateInvoices(now);
   const invoiceReminders = await sendInvoiceReminders(now);
@@ -34,12 +35,13 @@ export async function runJobsOnce(now: Date = new Date()) {
   const locationPurge = await purgeStaleDriverLocations(now);
   const result = {
     expiry, retry, confirmReminders, paymentReminders, closed, invoicesGenerated, invoiceReminders, invoiceEscalation,
-    reviewPrompts, documentExpiry, reacceptanceNudges, locationPurge,
+    reviewPrompts, documentExpiry, reacceptanceNudges, locationPurge, disputeReminders,
   };
   const noisy =
     expiry.checked > 0 || retry.checked > 0 || Object.values(confirmReminders).some(Boolean) || Object.values(paymentReminders).some(Boolean) ||
     closed.closed > 0 || invoicesGenerated.invoiced > 0 || Object.values(invoiceReminders).some(Boolean) || Object.values(invoiceEscalation).some(Boolean) ||
-    reviewPrompts.reminded > 0 || Object.values(documentExpiry).some(Boolean) || reacceptanceNudges.notified > 0 || Object.values(locationPurge).some(Boolean);
+    reviewPrompts.reminded > 0 || Object.values(documentExpiry).some(Boolean) || reacceptanceNudges.notified > 0 || Object.values(locationPurge).some(Boolean) ||
+    disputeReminders.reminded > 0;
   if (noisy) console.log("[jobs]", JSON.stringify(result));
   return result;
 }

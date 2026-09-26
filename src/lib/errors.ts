@@ -201,6 +201,16 @@ export const ERRORS = {
     ar: "سبق الإبلاغ عن هذا التقييم.",
     en: "This review has already been flagged.",
   },
+  RESPONSE_WINDOW_CLOSED: {
+    status: 409,
+    ar: "انتهت مهلة الرد على هذا البلاغ (٤٨ ساعة).",
+    en: "The 48-hour window to respond to this report has closed.",
+  },
+  ALREADY_RESPONDED: {
+    status: 409,
+    ar: "سبق أن ردّيت على هذا البلاغ.",
+    en: "You have already responded to this report.",
+  },
   INTERNAL: { status: 500, ar: "حدث خطأ غير متوقع.", en: "Something went wrong." },
 } as const;
 

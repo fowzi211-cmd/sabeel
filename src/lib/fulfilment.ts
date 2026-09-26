@@ -73,3 +73,10 @@ export const REVIEWS_UNTIL_RATED = 3;
 
 export const REVIEW_CATEGORIES = ["timeliness", "asOrdered", "packaging", "driverConduct", "value"] as const;
 export type ReviewCategory = (typeof REVIEW_CATEGORIES)[number];
+
+// ───────────────────────── slice 10: dispute response window ─────────────────────────
+
+/** Design pack: a delivery dispute is OPENED → RESPONSE_DUE (48 h) → UNDER_REVIEW. The supplier may answer once in this window. */
+export const DISPUTE_RESPONSE_HOURS = 48;
+/** The supplier is reminded once when this little of the window is left. */
+export const DISPUTE_RESPONSE_REMINDER_HOURS = 12;

@@ -70,6 +70,12 @@ down, cancel, or dismiss (confirm the delivery stands as reported). A **non-paym
 (supplier says they weren't paid) needs: confirm received, still due, or write off. Always write a
 real resolution note — the buyer and supplier both see it, and it is part of the permanent record.
 
+When a buyer opens a delivery dispute the supplier has **48 hours** to answer it once, with an optional photo,
+from its order page. The *Disputes* queue shows a **Supplier response** column: *Responded*, *Awaiting*, or
+*No response* (window missed). Read the supplier's answer and photo on the order page before you decide. A missed
+window does not stop you deciding — it is one more fact, not a verdict. Disputes opened before this feature
+(and non-payment disputes) have no response step and show "—".
+
 ## Fee invoices
 
 Suppliers self-report when they've paid an invoice (bank reference, optional receipt). Your job is

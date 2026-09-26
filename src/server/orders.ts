@@ -297,6 +297,7 @@ function paymentView(o: OrderFull, opts: { withBank: boolean }) {
 const disputeView = (d: OrderFull["disputes"][number]) => ({
   id: d.id, category: d.category, openedBy: d.openedBy, status: d.status, note: d.note,
   outcome: d.outcome, resolutionNote: d.resolutionNote, resolvedAt: d.resolvedAt, createdAt: d.createdAt,
+  responseDueAt: d.responseDueAt, supplierResponse: d.supplierResponse, supplierRespondedAt: d.supplierRespondedAt, hasEvidence: !!d.responseFileKey,
 });
 
 /** What proof looks like to the buyer: the Delivery Report (design pack S08), without reviewer internals. */

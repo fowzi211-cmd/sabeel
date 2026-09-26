@@ -6,7 +6,7 @@ import { AppError } from "@/lib/errors";
 import {
   CONFIRM_ADMIN_REVIEW_HOURS, CONFIRM_REMINDER_HOURS, DELIVERY_DISPUTE_OUTCOMES, DISPUTE_CATEGORIES,
   MAX_DELIVERY_ATTEMPTS, PAYMENT_DISPUTE_OUTCOMES, PAYMENT_REMINDER_BEFORE_HOURS,
-  PAYMENT_REMINDER_FOLLOWUP_DAYS, REVIEW_WINDOW_DAYS,
+  PAYMENT_REMINDER_FOLLOWUP_DAYS, REVIEW_WINDOW_DAYS, DISPUTE_RESPONSE_HOURS, DISPUTE_RESPONSE_REMINDER_HOURS,
 } from "@/lib/fulfilment";
 import { generateSlots } from "./delivery";
 import { feeHalalas, formatSar, supplierKeeps } from "@/lib/money";
@@ -16,7 +16,7 @@ import { checkRateLimit } from "@/lib/rateLimit";
 import { DEFAULT_PAGE_SIZE, paginate } from "@/lib/pagination";
 import { notifyCancelled } from "./orders";
 import { notifySupplier, notifyUserId, type Bilingual } from "./notify";
-import { deleteUpload, saveReceipt } from "./storage";
+import { deleteUpload, saveDisputeEvidence, saveReceipt } from "./storage";
 
 type Actor = { id: string; roles: Role[] };
 const TX = { timeout: 20_000, maxWait: 10_000 };
@@ -101,7 +101,7 @@ export async function adminConfirmSilence(admin: Actor, orderId: string, note: s
 export const reportProblemSchema = z.object({ category: z.enum(DISPUTE_CATEGORIES), note: z.string().trim().min(2).max(500) });
 
 /** T15: the buyer reports a problem with the delivery itself — pauses confirmation and, later, payment. */
-export async function openDeliveryDispute(user: User, orderId: string, input: z.infer<typeof reportProblemSchema>, meta: RequestMeta) {
+export async function openDeliveryDispute(user: User, orderId: string, input: z.infer<typeof reportProblemSchema>, meta: RequestMeta, now: Date = new Date()) {
   checkRateLimit(`dispute.open:${user.id}`, 10, 60 * 60_000);
   const order = await db.order.findFirst({ where: { id: orderId, buyerId: user.id } });
   if (!order) throw new AppError("NOT_FOUND");
@@ -116,7 +116,7 @@ export async function openDeliveryDispute(user: User, orderId: string, input: z.
     const open = await tx.dispute.findFirst({ where: { orderId, status: "OPEN" } });
     if (open) throw new AppError("DISPUTE_OPEN");
     if (!["DELIVERED_DRIVER_CONFIRMED", "ADMIN_REVIEW"].includes(fresh.status)) throw new AppError("INVALID_STATE");
-    const created = await tx.dispute.create({ data: { orderId, category: input.category, openedBy: "BUYER", openedById: user.id, note: input.note } });
+    const created = await tx.dispute.create({ data: { orderId, category: input.category, openedBy: "BUYER", openedById: user.id, note: input.note, responseDueAt: new Date(now.getTime() + DISPUTE_RESPONSE_HOURS * HOUR) } });
     await tx.order.update({ where: { id: orderId }, data: { status: "DISPUTED" } });
     await tx.orderEvent.create({ data: { orderId, type: "DISPUTED", actorId: user.id, note: input.category } });
     await audit({ actor: { id: user.id, roles: user.roles }, action: "dispute.opened", entity: "Dispute", entityId: created.id, after: { category: input.category }, note: input.note, meta }, tx);
@@ -124,10 +124,41 @@ export async function openDeliveryDispute(user: User, orderId: string, input: z.
   }, TX);
 
   await notifySupplier(order.supplierId, "dispute.opened", {
-    ar: `سبيل: أبلغ المشتري عن مشكلة في الطلب ${order.orderNo}. سيراجعها فريق سبيل ويتواصل معك.`,
-    en: `Sabeel: the buyer reported a problem with order ${order.orderNo}. Our team will review it and get in touch.`,
+    ar: `سبيل: أبلغ المشتري عن مشكلة في الطلب ${order.orderNo}. يمكنك الرد مع صورة اختيارية خلال ${DISPUTE_RESPONSE_HOURS} ساعة من صفحة الطلب، ثم يراجعها فريق سبيل.`,
+    en: `Sabeel: the buyer reported a problem with order ${order.orderNo}. You can respond, with an optional photo, from the order page within ${DISPUTE_RESPONSE_HOURS} hours; our team then reviews it.`,
   }, { orderId, disputeId: dispute.id });
   return dispute;
+}
+
+export const disputeResponseSchema = z.object({ note: z.string().trim().min(5).max(1000) });
+
+/**
+ * The supplier's one answer to a buyer's delivery dispute (design pack: OPENED → RESPONSE_DUE 48 h → UNDER_REVIEW).
+ * Optional photo. It never changes the dispute's outcome — an admin still decides — but they see both sides.
+ */
+export async function respondToDispute(user: User, supplier: Supplier, orderId: string, input: z.infer<typeof disputeResponseSchema>, file: File | null, meta: RequestMeta, now: Date = new Date()) {
+  checkRateLimit(`dispute.respond:${supplier.id}`, 20, 60 * 60_000);
+  const dispute = await db.dispute.findFirst({ where: { orderId, status: "OPEN", openedBy: "BUYER", order: { supplierId: supplier.id } }, include: { order: { select: { orderNo: true, buyerId: true } } } });
+  if (!dispute) throw new AppError("NOT_FOUND");
+  if (!dispute.responseDueAt) throw new AppError("INVALID_STATE");
+  if (dispute.supplierRespondedAt) throw new AppError("ALREADY_RESPONDED");
+  if (now > dispute.responseDueAt) throw new AppError("RESPONSE_WINDOW_CLOSED");
+
+  const photo = file ? await saveDisputeEvidence(dispute.id, file) : null;
+  const changed = await db.dispute.updateMany({
+    where: { id: dispute.id, status: "OPEN", supplierRespondedAt: null },
+    data: { supplierResponse: input.note.trim(), supplierRespondedAt: now, supplierRespondedById: user.id, ...(photo ? { responseFileKey: photo.fileKey, responseMime: photo.mime } : {}) },
+  });
+  if (changed.count === 0) {
+    if (photo) await deleteUpload(photo.fileKey);
+    throw new AppError("ALREADY_RESPONDED");
+  }
+  await audit({ actor: { id: user.id, roles: user.roles }, action: "dispute.responded", entity: "Dispute", entityId: dispute.id, after: { withPhoto: !!photo }, note: input.note, meta });
+  await notifyUserId(dispute.order.buyerId, "dispute.supplier_responded", {
+    ar: `سبيل: ردّ المورّد على بلاغك عن الطلب ${dispute.order.orderNo}. سيراجع فريق سبيل الطرفين ويقرّر.`,
+    en: `Sabeel: the supplier responded to your report on order ${dispute.order.orderNo}. Our team will review both sides and decide.`,
+  }, { orderId, disputeId: dispute.id }, { sms: false });
+  return { ok: true as const };
 }
 
 export const nonPaymentSchema = z.object({ note: z.string().trim().min(2).max(500) });
@@ -291,6 +322,26 @@ export async function listOpenDisputes(category?: DisputeCategory) {
     include: { order: { select: { id: true, orderNo: true, status: true, totalHalalas: true, supplier: { select: { tradeName: true, legalNameAr: true } } } } },
     orderBy: { createdAt: "asc" },
   });
+}
+
+export { responseState } from "@/lib/dispute";
+
+/** Nudge the supplier once when the response window is nearly over and it has not answered. */
+export async function sendDisputeResponseReminders(now: Date = new Date(), limit = 200) {
+  const stats = { reminded: 0 };
+  const due = await db.dispute.findMany({
+    where: { status: "OPEN", openedBy: "BUYER", supplierRespondedAt: null, responseDueAt: { gt: now, lte: new Date(now.getTime() + DISPUTE_RESPONSE_REMINDER_HOURS * HOUR) } },
+    select: { id: true, orderId: true, order: { select: { orderNo: true, supplierId: true } } }, take: limit,
+  });
+  for (const d of due) {
+    if (await alreadyNotified("dispute.response_reminder", d.orderId)) continue;
+    await notifySupplier(d.order.supplierId, "dispute.response_reminder", {
+      ar: `سبيل: تبقّت أقل من ${DISPUTE_RESPONSE_REMINDER_HOURS} ساعة للرد على بلاغ المشتري عن الطلب ${d.order.orderNo}.`,
+      en: `Sabeel: less than ${DISPUTE_RESPONSE_REMINDER_HOURS} hours left to respond to the buyer's report on order ${d.order.orderNo}.`,
+    }, { orderId: d.orderId, disputeId: d.id });
+    stats.reminded++;
+  }
+  return stats;
 }
 
 // ───────────────────────── buyer payment actions ─────────────────────────

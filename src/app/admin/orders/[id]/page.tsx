@@ -112,6 +112,11 @@ export default async function AdminOrderDetail({ params }: PageProps<"/admin/ord
                   <span className="text-muted">{fmtWhen(d.createdAt, locale)}</span>
                 </div>
                 <p className="mt-1">{d.note}</p>
+                {d.supplierResponse ? (
+                  <p className="mt-1"><span className="font-medium">{t("dispute.respond.supplierSays")}:</span> {d.supplierResponse}{d.responseFileKey ? <> · <a className="underline" href={`/api/v1/disputes/${d.id}/evidence`} target="_blank" rel="noreferrer">{t("dispute.respond.viewPhoto")}</a></> : null}</p>
+                ) : d.status === "OPEN" && d.responseDueAt ? (
+                  <p className="mt-1 text-muted">{new Date() > new Date(d.responseDueAt) ? t("dispute.respond.missed") : t("dispute.respond.awaiting", { due: fmtWhen(d.responseDueAt, locale) })}</p>
+                ) : null}
                 {d.outcome ? <p className="mt-1 text-muted">{t(`dispute.outcome.${d.outcome}`)}{d.resolutionNote ? ` — ${d.resolutionNote}` : ""}</p> : null}
               </li>
             ))}

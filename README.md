@@ -5,7 +5,7 @@ running application. The product decisions live next door in
 [`../water-charity-platform`](../water-charity-platform) — read `PLATFORM_PROMPT_LEAN.md` (what
 we are building) and `design/DESIGN_PACK.md` (screens, data model, state machines) first.
 
-**Status: all 6 slices, plus hardening and slices 8–9, are built and verified.** Slice 1 = accounts, supplier and
+**Status: all 6 slices, plus hardening and slices 8–10, are built and verified.** Slice 1 = accounts, supplier and
 independent-distributor onboarding, admin approval, Brand Registry, online agreement acceptance.
 Slice 2 = supplier catalogue and prices, Makkah districts and delivery rules, offer comparison,
 and ordering (place / cancel) with a read-only supplier inbox and admin district/order screens.
@@ -67,7 +67,7 @@ when `NODE_ENV != production`; in production the console provider is refused (se
 |---|---|
 | `npm run dev` / `build` / `start` | Development server / production build / production server (port 3020) |
 | `npm run typecheck` · `npm run lint` | TypeScript and ESLint |
-| `npm test` | 123 unit tests (validators, encryption, agreement fingerprint, money/VAT/fee maths, delivery slots, ranking, trust caps, proof rules, payment/on-time rules, fee-invoice/ceiling maths, review rules) |
+| `npm test` | 128 unit tests (validators, encryption, agreement fingerprint, money/VAT/fee maths, delivery slots, ranking, trust caps, proof rules, payment/on-time rules, fee-invoice/ceiling maths, review rules) |
 | `npm run verify` | **120 end-to-end checks** for slice 1 against a running dev server and the dev DB (see below) |
 | `npm run verify:2` | **124 end-to-end checks** for slice 2: catalogue, zones, slot rules, comparison, order placement/idempotency/spending cap, cancel, privacy shaping, admin screens |
 | `npm run verify:3` | **160 end-to-end checks** for slice 3: accept/decline/re-route/escalate, expiry job, drivers, trip, recipient code, proof rules, immutability, failed delivery and reschedule, privacy (needs `npm run db:seed` first) |
@@ -77,6 +77,7 @@ when `NODE_ENV != production`; in production the console provider is refused (se
 | `npm run verify:7` | **23 end-to-end checks** for slice 7 hardening: cursor pagination on orders/payments/fee-invoices/reviews (including a supplier's multi-status tab query and exact `groupBy` counts), recency-weighted ratings reaching the real search API, and ceiling-warning dedup by genuine threshold-crossing — including the recovery-then-re-rise case a calendar-day dedup would miss (needs `npm run db:seed` first) |
 | `npm run verify:8` | **37 end-to-end checks** for slice 8: on-time delivery % (15-min tolerance, 90-day window, minimum sample, reaching the real search API and the ranking), payment totals that cover every page and follow the filters, the platform-wide and per-supplier totals agreeing with each other, and the review-flag flow (report → admin queue → dismiss or remove, notifications, access control) (needs `npm run db:seed` first) |
 | `npm run verify:9` | **20 end-to-end checks** for slice 9: acceptance rate and dispute rate (window, minimum sample, what does and doesn't count), the R07 rating maths (180-day decay, prior of 3), category averages, the supplier profile page and API (first names only, anonymous respected, removed reviews hidden, paused suppliers not found, sign-in required) (needs `npm run db:seed` first; run the dev server with `JOBS_ENABLED=false` so its own job loop can't race the fixtures) |
+| `npm run verify:10` | **28 end-to-end checks** for slice 10: the 48-hour dispute response window opening with the dispute, the supplier's one answer with an optional photo (validation, one-answer rule, non-image refusal), who can see the note and photo, the closed window, the admin's view, the reminder job (once, only inside the last 12 h), and that an answered dispute is still decided by an admin (needs `npm run db:seed` first; run the dev server with `JOBS_ENABLED=false`) |
 | `npm run jobs:run` | One manual pass of the background jobs (the server also runs them every minute) |
 | `npm run db:migrate` · `db:generate` · `db:seed` · `db:seed:demo` | Database tasks |
 | `npm run db:backup` · `db:restore -- <file>` | `scripts/backup.ts` / `scripts/restore.ts` — see `DEPLOY.md` §8 |
@@ -295,9 +296,9 @@ src/i18n/               Arabic + English dictionaries (English must provide ever
    all cursor-paginated now (`src/lib/pagination.ts`), 50 rows a page with a "Load more" link; a
    supplier's per-status tab counts come from a separate `groupBy` query so they stay exact regardless
    of page size.
-11. **Delivery-dispute evidence is the buyer's word plus the driver's original proof** — there is no separate
-   "supplier responds with counter-evidence" step (design pack's 48 h response window). An admin decides from
-   what is already on file; this is a deliberate scope cut for the MVP, not an oversight.
+11. ~~**Delivery-dispute evidence is the buyer's word plus the driver's original proof**~~ **Closed in slice 10**: the
+   supplier can answer a buyer's delivery dispute once, with an optional photo, within 48 hours. The buyer can
+   still not attach photos to the dispute itself, and disputes opened before slice 10 have no response step.
 12. **FeeAccrual is per-order, not per-order-item** — a partial delivery still produces one accrual row for
    the order's delivered total, not a line per item. There is also no invoice-line-dispute workflow: a supplier
    can only accept an invoice or have its self-reported payment rejected by an admin, never dispute one
@@ -364,11 +365,23 @@ src/i18n/               Arabic + English dictionaries (English must provide ever
 - **Acceptance rate** = accepted ÷ (accepted + declined + expired) offers in the last 90 days (open and withdrawn offers don't count). **Dispute rate** = delivered orders with a delivery dispute ÷ delivered orders, last 90 days — dismissed disputes and non-payment disputes don't count against the supplier. Both show "not enough activity yet" under 5 cases (`src/lib/rates.ts`, `src/server/supplierStats.ts`).
 - **R07 alignment**: rating decay half-life 180 days (was 90) and a prior of 3 reviews toward the platform mean (was none).
 
+## Slice 10 — the dispute response window
+
+- A buyer's delivery dispute now carries `responseDueAt` (48 h after opening, `DISPUTE_RESPONSE_HOURS`). The supplier
+  answers once from the order page (note of at least 5 characters, optional image up to 8 MB, sniffed by bytes), via
+  `POST /api/v1/supplier/orders/[id]/dispute/respond`. It never changes the dispute's outcome — an admin still decides.
+- The note is shown to the buyer, the supplier and admins; the photo is served by `GET /api/v1/disputes/[id]/evidence`
+  to those three parties only (private, no-store, nosniff). Buyers never see the storage key.
+- Admins see the response state in the disputes queue (Responded / Awaiting / No response) and on the order page.
+  A missed window is shown but does not block a decision.
+- `sendDisputeResponseReminders()` (in the 60 s job loop) reminds the supplier once when under 12 h remain.
+- Non-payment disputes (supplier-opened) have no response step. Schema: `slice10_dispute_response` migration.
+
 ## Roadmap
 
 All 6 slices in the original plan are built and verified, plus two ad-hoc passes: **slice 7 hardening**
 (pagination, recency-weighted ratings, ceiling-warning dedup — gaps #10, #14, #15) and **slice 8**
-(on-time %, real payment totals, review reports — see the Slice 8 section) and **slice 9** (supplier profile, acceptance/dispute rates, R07 alignment). Deliberately still open:
+(on-time %, real payment totals, review reports — see the Slice 8 section) **slice 9** (supplier profile, acceptance/dispute rates, R07 alignment) and **slice 10** (dispute response window). Deliberately still open:
 PDF certificate generation (#4), buyer-side review reports (#13, #20), a recipient-PII purge job (#17 — blocked on a lawyer-defined retention
 period, not something to invent), and moving the rate limiter to a shared store (#18 — a disclosed,
 reasonable tradeoff at the pilot's one-instance scale). What remains beyond that is exactly what's listed

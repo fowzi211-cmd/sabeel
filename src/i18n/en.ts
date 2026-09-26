@@ -806,6 +806,7 @@ export const en: Dict = {
   },
   adminDisputes: {
     category: "Category",
+    response: "Supplier response",
     title: "Disputes",
     intro: "Open disputes waiting for a decision.",
     empty: "No open disputes.",
@@ -909,6 +910,18 @@ export const en: Dict = {
     openBannerSupplierOwn: "You reported that payment for this order was not received. Sabeel's team is reviewing it.",
     resolvedTitle: "Sabeel's decision",
     history: "Dispute history",
+    respond: {
+      title: "Respond to the buyer's report",
+      intro: "You can answer once, with an optional photo, until {due}. Sabeel's team reads both sides before deciding.",
+      placeholder: "What happened? (at least 5 characters)",
+      photo: "Photo (optional)",
+      submit: "Send response",
+      supplierSays: "Supplier's response",
+      viewPhoto: "View photo",
+      awaiting: "Awaiting the supplier's response until {due}",
+      missed: "The supplier did not respond in time",
+      state: { NONE: "—", RESPONDED: "Responded", AWAITING: "Awaiting", MISSED: "No response" },
+    },
   },
   payment: {
     title: "Payment",

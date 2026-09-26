@@ -5,7 +5,7 @@ import { pageMeta } from "@/i18n/meta";
 import { fmtWhen } from "@/lib/format";
 import { requirePage } from "@/lib/guards";
 import { formatSar } from "@/lib/money";
-import { listOpenDisputes } from "@/server/payments";
+import { listOpenDisputes, responseState } from "@/server/payments";
 
 export const generateMetadata = pageMeta("adminDisputes.title");
 
@@ -25,6 +25,7 @@ export default async function AdminDisputes() {
               <th className={th}>{t("admin.orderNo")}</th>
               <th className={th}>{t("adminDisputes.category")}</th>
               <th className={th}>{t("admin.supplierCol")}</th>
+              <th className={th}>{t("adminDisputes.response")}</th>
               <th className={th}>{t("orders.total")}</th>
               <th className={th}>{t("orders.placedAt")}</th>
               <th className={th}></th>
@@ -36,6 +37,7 @@ export default async function AdminDisputes() {
                 <td className={td}><span className="ltr-iso font-mono">{d.order.orderNo}</span></td>
                 <td className={td}><Chip tone="warn">{t(`dispute.category.${d.category}`)}</Chip> <span className="text-xs text-muted">({t(`dispute.openedBy.${d.openedBy}`)})</span></td>
                 <td className={td}>{d.order.supplier.tradeName || d.order.supplier.legalNameAr}</td>
+                <td className={td}>{t(`dispute.respond.state.${responseState(d)}`)}</td>
                 <td className={td}>{formatSar(d.order.totalHalalas, locale)}</td>
                 <td className={td}>{fmtWhen(d.createdAt, locale)}</td>
                 <td className={td}><Link href={`/admin/orders/${d.order.id}`} className={btnCls("secondary", "!min-h-9 !py-1.5 text-sm")}>{t("adminDisputes.review")}</Link></td>

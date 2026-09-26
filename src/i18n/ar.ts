@@ -803,6 +803,7 @@ export const ar = {
   },
   adminDisputes: {
     category: "الفئة",
+    response: "ردّ المورّد",
     title: "النزاعات",
     intro: "النزاعات المفتوحة بانتظار قرار.",
     empty: "لا توجد نزاعات مفتوحة.",
@@ -906,6 +907,18 @@ export const ar = {
     openBannerSupplierOwn: "أبلغت أنت بعدم استلام دفعة هذا الطلب، وهي قيد المراجعة من فريق سبيل.",
     resolvedTitle: "قرار سبيل",
     history: "سجل النزاعات",
+    respond: {
+      title: "الرد على بلاغ المشتري",
+      intro: "يمكنك الرد مرة واحدة، مع صورة اختيارية، حتى {due}. يقرأ فريق سبيل الطرفين قبل أن يقرّر.",
+      placeholder: "ماذا حدث؟ (٥ أحرف على الأقل)",
+      photo: "صورة (اختياري)",
+      submit: "إرسال الرد",
+      supplierSays: "ردّ المورّد",
+      viewPhoto: "عرض الصورة",
+      awaiting: "بانتظار ردّ المورّد حتى {due}",
+      missed: "لم يردّ المورّد في الوقت المحدد",
+      state: { NONE: "—", RESPONDED: "ردّ", AWAITING: "بانتظار الرد", MISSED: "لم يردّ" },
+    },
   },
   payment: {
     title: "الدفع",

@@ -956,6 +956,14 @@ model Dispute {
   resolvedById   String?
   resolvedAt     DateTime?
   resolutionNote String?
+  /// Delivery disputes only: the supplier may answer until this moment (48 h after opening). Null = no response step.
+  responseDueAt        DateTime?
+  supplierResponse     String?
+  supplierRespondedAt  DateTime?
+  supplierRespondedById String?
+  /// Optional photo the supplier attaches; served only to the order's buyer, supplier and staff.
+  responseFileKey      String?
+  responseMime         String?
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
@@ -963,6 +971,7 @@ model Dispute {
 
   @@index([orderId, status])
   @@index([status, category])
+  @@index([responseDueAt])
 }
 
 // ═════════════════════════ Slice 5: fee accrual, invoicing, reviews ═════════════════════════
